@@ -239,7 +239,7 @@ def test_the_age_is_read_back_with_the_address_question_and_the_address_asks_for
     plan = bc.before_model(st, "বেনিয়াপুকুর কলকাতা", "bn")
     assert plan.speak == "থানার নামটা বলবেন?" and st.slots["_ps_pending"] == "বেনিয়াপুকুর কলকাতা"  # no police station was given: it is asked
     plan = bc.before_model(st, "বেনিয়াপুকুর থানা", "bn")
-    assert plan.skip_model and plan.slots == {"patient_address": "বেনিয়াপুকুর কলকাতা, থানা বেনিয়াপুকুর থানা"}
+    assert plan.skip_model and plan.slots == {"patient_address": "বেনিয়াপুকুর কলকাতা, থানা বেনিয়াপুকুর"}
     other = _booking(doctor_name="Sen", patient_name="A B", phone="9876543210")
     other.asked_fields.add("patient_address")
     assert bc.before_model(other, "বেনিয়াপুকুর থানা কলকাতা", "bn").slots == {"patient_address": "বেনিয়াপুকুর থানা কলকাতা"}  # the station is there: no question
@@ -259,7 +259,7 @@ def test_a_volunteered_address_without_the_police_station_still_gets_asked_for_o
     st.slots["patient_age"] = 45
     st.slots["_ps_pending"] = "বেনিয়াপুকুর কলকাতা"
     plan = bc.before_model(st, "বেনিয়াপুকুর থানা", "bn")
-    assert plan.skip_model and plan.slots == {"patient_address": "বেনিয়াপুকুর কলকাতা, থানা বেনিয়াপুকুর থানা"}
+    assert plan.skip_model and plan.slots == {"patient_address": "বেনিয়াপুকুর কলকাতা, থানা বেনিয়াপুকুর"}
 
 
 def test_the_last_question_is_the_day_the_hour_and_come_with_one_to_two_hours_in_hand():
@@ -503,7 +503,7 @@ def test_a_police_station_refusal_is_asked_again_before_the_booking_goes_on():
             refusal
         )  # asked again; the closing question waits
         plan = bc.before_model(st, "বেনিয়াপুকুর থানা", "bn")  # the station, now given: no problem
-        assert plan.skip_model and plan.slots == {"patient_address": "বেনিয়াপুকুর কলকাতা, থানা বেনিয়াপুকুর থানা"}, refusal
+        assert plan.skip_model and plan.slots == {"patient_address": "বেনিয়াপুকুর কলকাতা, থানা বেনিয়াপুকুর"}, refusal
 
 
 def test_a_caller_who_keeps_refusing_the_station_is_still_booked_after_two_re_asks():

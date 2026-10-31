@@ -239,3 +239,11 @@ def test_an_unclear_answer_to_the_age_question_after_the_number_asks_the_age_aga
     st.asked_fields.update({"patient_name", "phone", "patient_age"})
     plan = bc.before_model(st, "my uncle lives nearby", "en")
     assert plan.speak == bc.prompt("ask_age", "en") and "_phone_pending" not in st.slots
+
+
+def test_digits_with_an_end_word_are_put_on_the_end_even_when_the_number_already_ends_with_them():
+    # Owner, 2026-10-31: 95555944 so far, then "ফোর ফোর শেষে আছে" ("four four are at the end") -- it was taken for a repeated tail and ignored
+    assert bc.absorb("95555944", "ফোর ফোর শেষে আছে", True).number == "9555594444"
+    assert bc.absorb("955559444", "আরেকটা ফোর্ট শেষে আছে", True).number == "9555594444"
+    assert bc.absorb("9555594444", "ফোর ফোর শেষে আছে", True).number == "9555594444"  # already full and ending so: a repeated tail, not 12 digits
+    assert bc.absorb("9555", "পাঁচ নয় চার চার", True).buffer == "95555944"  # an ordinary run of digits is still just appended

@@ -195,7 +195,12 @@ def end_append(text: str) -> str:
     """"শেষে একটা জিরো হবে আরেকটা" ("at the end there will be one more zero"): the digit(s) to ADD to the number heard so far, or "". Needs an end word AND a
     'one more / another' word, so an ordinary digit run never reads as an addition. One to three digits."""
     t = unicodedata.normalize("NFC", text or "").lower()
-    if not (any(c in t for c in _END_CUES) and any(c in t for c in _MORE_CUES)):
+    if not any(c in t for c in _END_CUES):
+        return ""
+    # Owner, 2026-10-31 ("ফোর ফোর শেষে আছে" -- "four four are at the end" -- was ignored; the digits so far already ended in 44, so they were taken for a repeated tail): a SHORT sentence with an end word and one to
+    # three digits is the digits to put on the end, with or without a "one more" word ("আরেকটা ফোর্ট শেষে আছে").
+    short = len(t.split()) <= 6
+    if not (any(c in t for c in _MORE_CUES) or short):
         return ""
     digits = read_digits(text)[0]
     return digits if 1 <= len(digits) <= 3 else ""
@@ -216,7 +221,10 @@ def absorb(buffer: str, text: str, asked: bool) -> PhoneStep:
     if extra and buffer:
         # Real call 2026-10-18: nine digits so far and "শেষে একটা জিরো হবে আরেকটা": the zero goes on the end. If the caller repeats it ("…জিরো হবে জিরো") the number is
         # never longer than ten digits: only as many as fit are added.
-        candidate = (buffer + extra)[:10]
+        if len(buffer) + len(extra) > 10 and buffer.endswith(extra):
+            candidate = buffer  # the number is already as long as it can be and ends with these digits: the tail repeated
+        else:
+            candidate = (buffer + extra)[:10]
         done = phone_from_digits(candidate)
         if done:
             return PhoneStep("complete", number=done, pure=True)
