@@ -9202,6 +9202,9 @@ async def _unknown_full_name_turn(session: CallSession, text: str, lang: str) ->
     return True
 
 
+_YES_LEADS = frozenset("হ্যাঁ হাঁ হ্যা হা জি জী yes ya yeah yep ok okay haan han हाँ हां हाँजी हांजी जी ठीक ঠিক আচ্ছা".split())
+
+
 async def _which_doctor_turn(session: CallSession, text: str, lang: str) -> bool:
     """Owner, 2026-10-30: "কোন ডাক্তার এটা" / "who is he" about the doctor just spoken of: his name and department, from the open booking, else the doctor just offered, else the doctor being talked about --
     never asked back ("which doctor do you mean?"). False when no doctor is the subject."""
@@ -9228,6 +9231,13 @@ async def _which_doctor_turn(session: CallSession, text: str, lang: str) -> bool
     session.subject_doctor = info.get("name")
     dept = _dept_label(info.get("department") or "", lang)
     say = doctor_facts.speciality_reply(dept_talk.spoken_name(info, lang), dept, lang) if dept else dept_talk.spoken_name(info, lang)
+    first = (text or "").split()[0].strip(".,?!।").lower() if (text or "").split() else ""
+    b = session.booking
+    if b is not None and b.slots.get("_time_ok") == "pending" and first in _YES_LEADS:
+        # Owner, 2026-10-31 ("হ্যাঁ বলুন কোন ডাক্তার এটার নাম কি" after "...সামনের মাসের দুই তারিখে বসবেন। অ্যাপয়েন্টমেন্ট করব?" was answered "আপনার নামটা বলবেন?", the question ignored): a yes that also asks
+        # whose name it is gets the name first; the yes then carries on to the booking (the turn is NOT ended here).
+        await _speak(session, say, lang)
+        return False
     await _speak(session, _with_resume(session, say, lang), lang)
     return True
 

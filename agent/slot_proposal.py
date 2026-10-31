@@ -196,9 +196,10 @@ _SITS_ASK = {
     "en": "Doctor {doc} sits {when} at {time}. Shall I book that day?",
 }
 _SITS_MOVED = {
-    "bn": "{asked} ডাক্তার বসেন না। উনি {when} {time}-এ বসবেন। ওই দিনে অ্যাপয়েন্টমেন্ট করব?",
-    "hi": "{asked} डॉक्टर नहीं बैठते। वे {when} {time} बजे बैठेंगे। उसी दिन अपॉइंटमेंट कर दूँ?",
-    "en": "The doctor does not sit {asked}. The next sitting is {when} at {time}. Shall I book that day?",
+    # Owner, 2026-10-31 ("উনি -- in place of this tell the doctor name"): the doctor who sits on the later day is NAMED in the sentence, not "he".
+    "bn": "{asked} ডাক্তার বসেন না। ডাক্তার {doc} {when} {time}-এ বসবেন। ওই দিনে অ্যাপয়েন্টমেন্ট করব?",
+    "hi": "{asked} डॉक्टर नहीं बैठते। डॉक्टर {doc} {when} {time} बजे बैठेंगे। उसी दिन अपॉइंटमेंट कर दूँ?",
+    "en": "The doctor does not sit {asked}. Doctor {doc} sits next {when} at {time}. Shall I book that day?",
 }
 _ASKED_DAY = {
     "bn": {"today": "আজ", "tomorrow": "আগামীকাল", "day_after": "পরশু", "other": "{date} তারিখে"},
@@ -213,6 +214,7 @@ def sits_statement(
     """Owner, 2026-10-18: the caller asks for a doctor on a day: FIRST say whether the doctor sits then ("ডাক্তার বিশ্বজিৎ সেন আগামীকাল, 2026-10-19 তারিখে 10:00-এ বসবেন।"), or
     that he does not and when he next sits, and ask whether to book that day. The name and the rest are asked only after the caller says yes (or names another day)."""
     lang = lang if lang in _SITS_ASK else "en"
+    doctor = (doctor or "").replace("Dr. ", "", 1).replace("Dr ", "", 1).replace("ডাঃ ", "", 1).replace("ডাক্তার ", "", 1).replace("डॉ. ", "", 1).replace("डॉक्टर ", "", 1)  # the sentence already says "Doctor"
     table = _SITS_MOVED if moved else _SITS_ASK
     asked = _ASKED_DAY[lang][day_kind(asked_date, now)].format(date=asked_date) if (moved and asked_date) else {"bn": "ওই দিন", "hi": "उस दिन", "en": "that day"}[lang]
     return table[lang].format(doc=doctor, when=when_phrase(date_iso, lang, now), time=time, asked=asked)
