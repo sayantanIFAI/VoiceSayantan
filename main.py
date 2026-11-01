@@ -2410,6 +2410,9 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
         and not booking_carryover.mentions_change_or_cancel(text)
         and not booking_carryover.asks_to_book(text)
         and not (_fast_path is not None and _fast_path.named_tests(text, text_lang))
+        # Owner, 2026-11-01: exact words first. A sentence that SAYS a symptom or body part ("পেটে খুব ব্যাথা, পায়খানা হচ্ছে না") and does not itself name a doctor is a symptom question
+        # (department routing), never a doctor-sitting question -- the doctor of an earlier turn or a word that merely looks like a surname must not take it over.
+        and not (off_topic.has_health_word(text) and not _text_names_a_doctor(text, lang))
     ):
         _qdoc = _strict_enquiry_doctor(session, text, lang)
         _unk = None if _qdoc else dept_talk.unknown_doctor_name(text)
