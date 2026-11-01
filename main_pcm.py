@@ -142,7 +142,7 @@ from agent.channel_quality import CHANNEL_CLEAN_16K, classify_channel
 from agent.clause_split import split_into_clauses
 from agent.code_switch import mixture_bucket
 from agent.conditioning import condition as condition_audio
-from agent.confidence_gate import VERIFIED, confidence_state, is_low_confidence
+from agent.confidence_gate import LOW as _CONF_LOW, VERIFIED, confidence_state, is_low_confidence
 from agent import asr_refine
 from agent.detector_budget import run_within_budget
 from agent.distress import DistressEvidence, asks_for_person
@@ -1953,6 +1953,7 @@ async def _retry_on_enhanced_audio(
         not result.text.strip()
         or transcript_problem(result.text, lang, duration_s, result.decoder_agreement)
         or is_low_confidence(result.decoder_agreement)
+        or confidence_state(getattr(result, "decoder_used", None), result.decoder_agreement) == _CONF_LOW  # owner, 2026-11-01: total disagreement (0.0, both decoders ran) is the LEAST certain, not the most
     )
     if not poor:
         return result
@@ -6328,7 +6329,10 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         # a yes/no or a one-word reply, and never twice in a row (the second try is used as heard).
         _agr = float(asr_result.decoder_agreement or 0.0)
         _slot_ctx = in_booking_flow or session.pending_entity is not None or session.awaiting_handoff_offer or session.history_state is not None or session.awaiting_draft_answer or session.awaiting_pref_answer or session.awaiting_resume or session.awaiting_close_answer or session.awaiting_language_switch_offer
-        if 0.25 <= _agr < LOW_SCORE_REASK and not _slot_ctx and len(text.split()) >= 2 and session.low_score_reasks < 1 and classify_yes_no(text, lang) is None and not any(ch.isdigit() for ch in text):
+        # Owner, 2026-11-01: agreement exactly 0.0 with BOTH decoders run (decoder_used 'rnnt') is total disagreement -- the least certain a turn can be ('गार्डन ये सच', 'গরিয়া' were acted on as heard).
+        # 0.0 from a single decoder (CTC fallback) still means 'nothing to compare with' and is left alone.
+        _total_disagreement = _agr == 0.0 and confidence_state(getattr(asr_result, "decoder_used", None), _agr) == _CONF_LOW
+        if (0.25 <= _agr < LOW_SCORE_REASK or _total_disagreement) and not _slot_ctx and len(text.split()) >= 2 and session.low_score_reasks < 1 and classify_yes_no(text, lang) is None and not any(ch.isdigit() for ch in text):
             session.low_score_reasks += 1
             logger.info("[%s] recognisers barely agree (%.2f) and the turn is not garbled: asking to say it again", session.call_id, _agr)
             lang = _keep_language(session, prior_lang)
