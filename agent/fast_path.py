@@ -179,6 +179,7 @@ _SOFT_DATE = re.compile(
 )
 _THIS_TIME_OF_DAY = re.compile(r"(?:^|\s)(?:this (?:morning|afternoon|evening)|tonight|aaj raat|aaj shaam|aaj subah)(?=\s|$)")
 _COMMON_WORD_ALIASES = frozenset({"कर", "कर्", "কর", "করে", "kor", "kar"})  # a doctor's surname that is also an everyday word (do / tax)
+_SURNAME_CASE_ENDINGS = frozenset({"র", "ের", "কে", "ও", "বাবু", "বাবুর", "বাবুকে", "को", "का", "की", "से", "जी", "ji", "ke", "er", "der"})  # a surname + case ending / title is still the name
 _BEFORE_BOOKING = re.compile(r"(?:^|\s)(?:before|pehle|age|aage)(?:\s|$)|আগে|पहले")  # sourav 2026-10-16: "is he free BEFORE I book" asks, it does not book
 _SAYS_DOCTOR = re.compile(r"(?:^|\s)(?:doctor|doctors|dr|doc|daktar|doktor|dactar|ডাক্তার|ডক্টর|ডাঃ|ডাক্তারবাবু|डॉक्टर|डॉक्टर्|डाक्टर|डाक्टर्|डॉ|डॉक्टर्स)(?:\s|$)")
 _KAL = re.compile(r"(?:^|\s)(?:कल|kal)(?:\s|$)")
@@ -533,9 +534,26 @@ class FastPath:
             said = (form or name or "")
             if not (score >= 0.95 and said not in _COMMON_WORD_ALIASES and any(tok == said or tok.startswith(said) for tok in text.split())):
                 return None
+        # Owner, 2026-11-01: "...কোন ডাক্তার বসে ... আমার পেটে খুব ব্যাথা ... ঠিক করে তো ওটা দেখবে" (a stomach-ache) was answered with Dr. Kar of Orthopaedics: "ডাক্তার" was
+        # somewhere in the sentence, so the surname "কর" was accepted from the everyday verb "করে" (do). A surname that is also an everyday word is a doctor only as a
+        # word of its own (with a case ending) standing right beside a doctor word, never a piece of another word or a word far from "ডাক্তার".
+        if not whole and (form or name or "") in _COMMON_WORD_ALIASES and not self._alias_beside_doctor_word(text, form or name):
+            return None
         if not whole and not self.catalogue.given_name_ok(text, name, form):
             return None
         return name, form, score
+
+    @staticmethod
+    def _alias_beside_doctor_word(text: str, said: str) -> bool:
+        """Is the everyday-word surname `said` a whole word of the sentence (or that word + a case ending: কর-কে, कर को) with a doctor word as its next-door neighbour?"""
+        toks = text.split()
+        for i, tok in enumerate(toks):
+            if tok != said and not (tok.startswith(said) and tok[len(said):] in _SURNAME_CASE_ENDINGS):
+                continue
+            beside = toks[max(i - 1, 0):i] + toks[i + 1:i + 2]
+            if any(_SAYS_DOCTOR.search(f" {t} ") for t in beside):
+                return True
+        return False
 
     @staticmethod
     def _doctor_form_is_said(text: str, table: cues.CueTable, form: str | None) -> bool:
