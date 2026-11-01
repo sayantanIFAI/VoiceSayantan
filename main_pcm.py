@@ -273,7 +273,7 @@ from agent.senior_care import KindnessPlanner
 from agent.senior_voice import SeniorEvidence, explicit_senior_cue, stated_age_is_senior
 from agent.senior_voice import estimate as estimate_senior
 from agent.speaker_change import SpeakerChangeDetector, voice_embedding
-from agent.speech_norm import contains_critical_figure
+from agent.speech_norm import contains_critical_figure, verbalize
 from agent.speech_policy import derive_policy, effective_rate, limit_questions
 from agent.tools_client import ClinicToolsClient, ToolCallError
 from agent import tools_client  # noqa: E402  (API_STATS: the clinic-API calls of a turn)
@@ -1603,6 +1603,11 @@ async def _speak(session: CallSession, text: str, lang: str | None = None, fallb
         session.turn_spoken = True
         if NATURAL_PAUSE_ENABLED and NATURAL_PAUSE_S > 0:
             await asyncio.sleep(NATURAL_PAUSE_S)
+    _lead = getattr(session, "confirm_lead", None)
+    if _lead is not None:
+        session.confirm_lead = None
+        if _lead[1] == session.turn_count and not session.speaking_filler and not repeat_ok:
+            text = f"{_lead[0]} {text}"  # owner, 2026-11-01: the caller said back a phrase of the last reply ("অরুণ কুমার"): it is confirmed first, then the turn goes on
     if "?" in text or "\uff1f" in text:
         session.awaiting_answer = True
     policy = session.policy
@@ -4477,6 +4482,89 @@ async def _answer_echo(session: CallSession, text: str, lang: str) -> bool:
     return True
 
 
+_YES_LEAD = {"bn": "হ্যাঁ,", "hi": "हाँ,", "en": "Yes,"}
+_BARE_UNIT_WORDS = frozenset("টাকা টাকায় টাকার রুপি রুপী মাত্র taka tk rs rupee rupees रुपये रुपए रुपया".split())
+
+
+def _number_word_key(tok: str) -> str:
+    """"ছয়শো" / "ছয়শ" / "ছয়শত" are one word, said three ways."""
+    return re.sub(r"(?:শো|শত|শ)$", "শ", tok.strip().lower())
+
+
+def _find_in_last_reply(text: str, last: str, lang: str) -> tuple[str, str] | None:
+    """(the caller's words, the sentence of the agent's last reply that holds them): by the words as spoken, then by the way the digits of the reply are SPOKEN (600 -> ছয়শো), then by sound.
+    A lone number word ("ছয়শো") is compared as a word, not by sound (too short for a sound match)."""
+    with contextlib.suppress(Exception):
+        found = echo_check.find(text, last, bare=True)
+        if found:
+            return found
+    spoken = verbalize(last, lang)
+    if spoken == last:
+        return None
+    sentences_o = [x.strip() for x in re.split(r"(?<=[।.?!])\s+", last) if x.strip()]
+    sentences_v = [x.strip() for x in re.split(r"(?<=[।.?!])\s+", spoken) if x.strip()]
+
+    def _original(sentence: str) -> str:
+        if len(sentences_o) == len(sentences_v) and sentence in sentences_v:
+            return sentences_o[sentences_v.index(sentence)]
+        return last
+
+    with contextlib.suppress(Exception):
+        found = echo_check.find(text, spoken, bare=True)
+        if found:
+            return found[0], _original(found[1])
+    toks = [t for t in re.split(r"[\s,।.?!]+", text) if t]
+    nums = [t for t in toks if re.search(r"(?:শো|শত|শ)$", t) and len(t) >= 3]
+    if toks and len(toks) <= 3 and len(nums) == 1 and all(t in nums or t.lower() in _BARE_UNIT_WORDS for t in toks):
+        keys = {_number_word_key(t): t for t in re.split(r"[\s,।.?!]+", spoken)}
+        if _number_word_key(nums[0]) in keys:
+            for sv in sentences_v:
+                if nums[0] and any(_number_word_key(w) == _number_word_key(nums[0]) for w in re.split(r"[\s,।.?!]+", sv)):
+                    return " ".join(toks), _original(sv)
+    return None
+
+
+async def _answer_bare_repeat(session: CallSession, text: str, lang: str) -> bool:
+    """Owner, 2026-11-01: the caller can always say back a word, a group of words or a phrase of what the agent just said -- "ছয়শো টাকা" after "...ভিজিট 600 টাকা", "অরুণ কুমার" after the list of
+    doctors. The algorithm looks for it in the last reply FIRST (the exact words, the digits of the reply as they are spoken, then by sound) and CONFIRMS it ("হ্যাঁ, ছয়শো টাকা"), instead of treating it as a
+    new question (it was looked up as a test name: "no test called অরুণ কুমার সাহা"). When a question of ours is waiting for exactly such an answer (the doctors just offered) the confirmation is put in
+    front of the next reply and the booking goes on; otherwise it is the whole answer, with the sentence said again. Returns True when the turn was answered here."""
+    last = getattr(session, "last_spoken", "") or ""
+    if not last or not text or len(text.split()) > 5 or lang not in ("bn", "hi", "en"):
+        return False
+    b = session.booking
+    if b is not None and (b.stage != "collecting" or b.phone_buffer):
+        return False
+    if booking_capture.read_digits(text)[1] >= 2:
+        return False  # digits being said are an answer, never a word asked back
+    found = _find_in_last_reply(text, last, lang)
+    if not found:
+        return False
+    words, sentence = found
+    pend = getattr(session, "dept_pending", None)
+    if pend and session.turn_count - pend["turn"] <= 3:
+        session.confirm_lead = (f"{_YES_LEAD[lang]} {words}।", session.turn_count)  # the answer to our question: confirmed, then the pick / booking carries on
+        logger.info("[%s] the caller said back %r from the last reply: confirmed in front of the answer", session.call_id, words)
+        return False
+    if (
+        b is not None
+        or (getattr(session, "lapsed_pending", None) is not None and session.lapsed_pending[1] == session.turn_count)  # a pending 'did you mean...' question was just passed over
+        or session.awaiting_test_category
+        or session.awaiting_blood_test is not None
+        or session.awaiting_resume
+        or (getattr(session, "pending_enquiry", None) is not None and session.turn_count - session.pending_enquiry[1] <= 1)
+    ):
+        return False  # some other question of ours is waiting for its answer: not an echo
+    logger.info("[%s] the caller said back %r from the last reply: confirmed", session.call_id, words)
+    spoken = {
+        "bn": f"হ্যাঁ, {words}। আবার বলছি: {sentence}",
+        "hi": f"हाँ, {words}। फिर से बताती हूँ: {sentence}",
+        "en": f"Yes, {words}. Once more: {sentence}",
+    }[lang]
+    await _speak(session, spoken, lang)
+    return True
+
+
 _WEEKDAY_NAMES = {
     "bn": ["সোমবার", "মঙ্গলবার", "বুধবার", "বৃহস্পতিবার", "শুক্রবার", "শনিবার", "রবিবার"],
     "hi": ["सोमवार", "मंगलवार", "बुधवार", "गुरुवार", "शुक्रवार", "शनिवार", "रविवार"],
@@ -6564,6 +6652,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         session.lapsed_pending = (pending, session.turn_count)
 
     if not confirmed_entity:
+        if await _answer_bare_repeat(session, text, lang):
+            return  # the caller said back a phrase of our last reply: confirmed (owner, 2026-11-01)
         # OWNER'S INSTRUCTION, 2026-10-12: the answer to "is it blood, urine, or imaging?" (asked below, in the
         # "does not know the name at all" branch) is read here, FIRST -- before anything else gets a chance to
         # treat this turn as a fresh question. A category answer that doesn't match any of the three, or is

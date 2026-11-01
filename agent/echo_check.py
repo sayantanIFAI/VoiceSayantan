@@ -85,13 +85,15 @@ def asks_back(text: str) -> bool:
     return any((c in words) if len(c) <= 3 and c != "?" else (c in t) for c in _CUES)
 
 
-def find(user_text: str, last_spoken: str) -> tuple[str, str] | None:
+def find(user_text: str, last_spoken: str, bare: bool = False) -> tuple[str, str] | None:
     """(the caller's words that name something the agent said, the agent's sentence that holds it), or None. Only a short sentence that asks back is considered; the match is by
     sound, exact on the skeleton or a very close one for a longer word. The cue words themselves ("কেয়া", "ঠিক") are never the thing looked for."""
     if not user_text or not last_spoken:
         return None
     said = _tokens(user_text)
-    if not 1 <= len(said) <= 8 or not asks_back(user_text):
+    # bare=True (owner, 2026-11-01): the caller just SAYS back a word or phrase of the agent's last reply, with no "কেয়া / ঠিক / did you say" -- "অরুণ কুমার", "ছয়শো টাকা". Only a short
+    # sentence, and every content word of it must be found in what the agent said.
+    if not 1 <= len(said) <= (5 if bare else 8) or (not bare and not asks_back(user_text)):
         return None
     cue_skeletons = {skeleton(c) for c in _CUES if c != "?"} | {""}
     spoken_sentences = [s.strip() for s in re.split(r"(?<=[।.?!])\s+", last_spoken) if s.strip()] or [last_spoken]
@@ -111,4 +113,6 @@ def find(user_text: str, last_spoken: str) -> tuple[str, str] | None:
     content = [t for t in said if t.lower() not in _STOP and skeleton(t) not in cue_skeletons]
     if len(best[1].split()) * 2 < len(content):
         return None
+    if bare and len([t for t in best[1].split() if t.lower() not in _STOP]) < len(content):
+        return None  # a bare repeat is ONLY the agent's own words: one matching word inside a different sentence is not an echo
     return best[1], best[2]
