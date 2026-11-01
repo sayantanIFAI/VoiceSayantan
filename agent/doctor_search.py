@@ -226,12 +226,12 @@ def sitting_pick_question(names: list[str], when_phrase: str, lang: str, items: 
     grouped = grouped_by_part(items or [], lang)
     if grouped:
         return {
-            "bn": f"{when_phrase} {grouped}। কার কাছে অ্যাপয়েন্টমেন্ট করব?",
+            "bn": f"{when_phrase} {grouped}। কার কাছে বুক করব?",
             "hi": f"{when_phrase} {grouped}। किसके पास अपॉइंटमेंट करूँ?",
             "en": f"{when_phrase} {grouped}. Whom shall I book?",
         }[lang]
     return {
-        "bn": f"{when_phrase} এই ডাক্তাররা বসেন: {_join(names, lang)}। কার কাছে অ্যাপয়েন্টমেন্ট করব?",
+        "bn": f"{when_phrase} এই ডাক্তাররা বসেন: {_join(names, lang)}। কার কাছে বুক করব?",
         "hi": f"{when_phrase} ये डॉक्टर बैठते हैं: {_join(names, lang)}। किसके पास अपॉइंटमेंट करूँ?",
         "en": f"{when_phrase} these doctors sit: {_join(names, lang)}. Whom shall I book?",
     }[lang]
@@ -340,7 +340,7 @@ def overview_reply(examples: list[tuple[str, str]], lang: str) -> str:
 
 # ------------------------------------------------------------------------------------------------------------------------------ questions about the doctors JUST offered
 
-# Owner, 2026-10-27: after "আগামীকাল এই ডাক্তাররা বসেন: দেবাশিস দাস আর অমিত কর। কার কাছে অ্যাপয়েন্টমেন্ট করব?" the caller asked "কে ভালো হবে এর মধ্যে সকালে কে বসে" (who is better among these, who sits in the
+# Owner, 2026-10-27: after "আগামীকাল এই ডাক্তাররা বসেন: দেবাশিস দাস আর অমিত কর। কার কাছে বুক করব?" the caller asked "কে ভালো হবে এর মধ্যে সকালে কে বসে" (who is better among these, who sits in the
 # morning): the answer was "sorry, say again" and then "I cannot say who is better; tell me your problem", which lost the whole conversation. The doctors offered stay the subject.
 _GOOD_AMONG = re.compile(r"(?:ভালো|ভাল|ভাল|অভিজ্ঞ|সেরা)|(?:अच्छा|अच्छे|बेहतर|सबसे अच्छ)|\b(?:good|better|best)\b", re.I)
 _PARTS = {
@@ -403,18 +403,18 @@ def offered_followup_reply(items: list[dict], part: str | None, good: bool, lang
             return say, one
         if not fits:
             return {
-                "bn": f"{lead}{word} এদের কেউ বসেন না। এঁরা বসেন: {names}। এদের মধ্যে কার কাছে অ্যাপয়েন্টমেন্ট করব?",
+                "bn": f"{lead}{word} এদের কেউ বসেন না। এঁরা বসেন: {names}। এদের মধ্যে কার কাছে বুক করব?",
                 "hi": f"{lead}{word} इनमें से कोई नहीं बैठता। ये बैठते हैं: {names}। इनमें से किसके पास अपॉइंटमेंट करूँ?",
                 "en": f"{lead}None of them sits {word}. They sit: {names}. Whom shall I book?",
             }[lg], None
         shown = "; ".join(_with_hours(i) for i in fits)
         return {
-            "bn": f"{lead}{word} বসেন: {shown}। এদের মধ্যে কার কাছে অ্যাপয়েন্টমেন্ট করব?",
+            "bn": f"{lead}{word} বসেন: {shown}। এদের মধ্যে কার কাছে বুক করব?",
             "hi": f"{lead}{word} बैठते हैं: {shown}। इनमें से किसके पास अपॉइंटमेंट करूँ?",
             "en": f"{lead}Sitting {word}: {shown}. Whom shall I book?",
         }[lg], None
     return {
-        "bn": f"{lead}এদের মধ্যে আমি কার কাছে অ্যাপয়েন্টমেন্ট করব? {names}।",
+        "bn": f"{lead}এদের মধ্যে আমি কার কাছে বুক করব? {names}।",
         "hi": f"{lead}इनमें से मैं किसके पास अपॉइंटमेंट करूँ? {names}।",
         "en": f"{lead}Whom among them shall I book? {names}.",
     }[lg], None
