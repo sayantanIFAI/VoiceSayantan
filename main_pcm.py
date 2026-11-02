@@ -3458,6 +3458,7 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
         if not slots.get("doctor_name"):
             return None
         result = await _tools.get_doctor_availability(slots["doctor_name"], slots.get("date"))
+        result = _drop_unfounded_ambiguity(str(slots.get("doctor_name") or ""), result)
         _cd = _turn_context_doctor.get()
         if not result.get("found") and not result.get("ambiguous") and _cd is not None and _resembles_doctor(str(slots.get("doctor_name") or ""), _cd):
             # Owner, 2026-10-29: Dr. Rajarshi Dutta is the subject and the caller says "রাজশ্রী দত্ত" -- the same surname and a first name that sounds close: it is him, no "no such doctor"
@@ -4574,6 +4575,23 @@ def _find_in_last_reply(text: str, last: str, lang: str) -> tuple[str, str] | No
                 if nums[0] and any(_number_word_key(w) == _number_word_key(nums[0]) for w in re.split(r"[\s,।.?!]+", sv)):
                     return " ".join(toks), _original(sv)
     return None
+
+
+def _drop_unfounded_ambiguity(said: str, result: dict) -> dict:
+    """Owner, 2026-11-03 ("কথা বলছি ডাক্তার শায়ক" was answered "নির্মল রায় নাকি পার্থ রায়?"): the clinic API calls a name "ambiguous" when two doctors score alike, even when neither sounds like what was said
+    ("শায়ক" only shares an ending with "রায়"). The caller is asked to choose between doctors only when at least one word they said sounds like a word of a suggested doctor; otherwise it is a name nobody
+    has, and the result goes on as "not found" (the reply then says so, and offers the closest doctors from the clinic's own list)."""
+    if result.get("found") or not result.get("ambiguous"):
+        return result
+    suggestions = [*(result.get("did_you_mean") or []), *(result.get("did_you_mean_bn") or [])]
+    heard = name_groups._tokens(said)  # noqa: SLF001
+    if not heard or not suggestions:
+        return result
+    for s in suggestions:
+        for w in name_groups._tokens(s):  # noqa: SLF001
+            if any(name_groups._same(t, w) for t in heard):  # noqa: SLF001
+                return result
+    return {**result, "ambiguous": False, "did_you_mean": [], "did_you_mean_bn": []}
 
 
 async def _answer_pace_request(session: CallSession, text: str, lang: str) -> bool:

@@ -279,6 +279,13 @@ def booking_reply(slots: dict, result: dict, lang: str = "bn") -> str:
     if reason == "doctor_ambiguous":
         # Two doctors fit the name (two Sens): never picked -- asked, by whole name.
         names = result.get("did_you_mean_bn") or result.get("did_you_mean") or []
+        if names and slots.get("doctor_name"):
+            # Owner, 2026-11-03: two doctors scoring alike is not a choice when neither sounds like the name said ("শায়ক" is not "রায়"): told as a name nobody has
+            from agent import name_groups
+
+            heard = name_groups._tokens(str(slots.get("doctor_name")))  # noqa: SLF001
+            if heard and not any(name_groups._same(t, w) for n in [*names, *(result.get("did_you_mean") or [])] for w in name_groups._tokens(n) for t in heard):  # noqa: SLF001
+                return f"দুঃখিত, '{slots.get('doctor_name')}' নামে কোনো ডাক্তার খুঁজে পেলাম না।"
         return (
             f"একাধিক ডাক্তার পেলাম -- কার কথা বলছেন, {' নাকি '.join(names)}?"
             if names
