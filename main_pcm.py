@@ -97,7 +97,7 @@ from agent import abuse, action_gate, call_end, slot_grouping, topic_flow
 from agent import ws_guard  # limits and validation for what a client may send (review 2026-10-28)
 from agent import head_pain  # "mathar betha": a headache is asked about once (hurt or only a headache) before a department is named
 from agent import where_doctor_sits  # which floor / room a doctor sits in: the counter tells
-from agent import common_surnames, pace_request  # owner, 2026-11-03: everyday surnames no doctor has; "ধীরে বলুন" / "স্লো" / "থেমে থেমে বলুন"
+from agent import common_surnames, doctor_name_match, pace_request  # owner, 2026-11-03: everyday surnames no doctor has; "ধীরে বলুন" / "স্লো" / "থেমে থেমে বলুন"
 from agent import name_groups  # a doctor's name that is nobody's: the doctors with that surname / first name / the closest names
 from agent import doctor_facts  # "কিসের ডাক্তার", the fee and the menu of what can be asked about the doctor being talked about
 from agent import entity_confirmation as entity_text
@@ -4581,17 +4581,20 @@ def _drop_unfounded_ambiguity(said: str, result: dict) -> dict:
     """Owner, 2026-11-03 ("কথা বলছি ডাক্তার শায়ক" was answered "নির্মল রায় নাকি পার্থ রায়?"): the clinic API calls a name "ambiguous" when two doctors score alike, even when neither sounds like what was said
     ("শায়ক" only shares an ending with "রায়"). The caller is asked to choose between doctors only when at least one word they said sounds like a word of a suggested doctor; otherwise it is a name nobody
     has, and the result goes on as "not found" (the reply then says so, and offers the closest doctors from the clinic's own list)."""
-    if result.get("found") or not result.get("ambiguous"):
+    if result.get("found") or _fast_path is None:
         return result
-    suggestions = [*(result.get("did_you_mean") or []), *(result.get("did_you_mean_bn") or [])]
-    heard = name_groups._tokens(said)  # noqa: SLF001
-    if not heard or not suggestions:
+    if not (result.get("ambiguous") or result.get("did_you_mean") or result.get("did_you_mean_bn")):
         return result
-    for s in suggestions:
-        for w in name_groups._tokens(s):  # noqa: SLF001
-            if any(name_groups._same(t, w) for t in heard):  # noqa: SLF001
-                return result
-    return {**result, "ambiguous": False, "did_you_mean": [], "did_you_mean_bn": []}
+    # Owner, 2026-11-03 ("no guess, no trusting any guess"): the lookup's own list is not used at all. The candidates are the clinic's doctors whose name has the SAME sound as the one said, else a CLOSE sound
+    # (agent/doctor_name_match.py); none = a name nobody has. More than one = a real choice; one = a question ("আপনি কি … বলতে চাইছেন?"), never an answer.
+    infos = list(_fast_path.catalogue._doctor_info.values())  # noqa: SLF001
+    cands = doctor_name_match.candidates(said, infos)
+    return {
+        **result,
+        "ambiguous": len(cands) > 1,
+        "did_you_mean": [c["name"] for c in cands],
+        "did_you_mean_bn": [dept_talk.spoken_name(c, "bn") for c in cands],
+    }
 
 
 async def _answer_pace_request(session: CallSession, text: str, lang: str) -> bool:
