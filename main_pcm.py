@@ -5401,6 +5401,9 @@ async def _serial_flow_turn(session: CallSession, text: str, lang: str, answer_h
     if action == "ask_again":
         await _speak(session, serial_lookup.ask_again(lang), lang)
         return
+    if action == "wrong_count":
+        await _speak(session, serial_lookup.wrong_count(payload, lang), lang)  # owner, 2026-11-03: how many digits were heard, then the number from the start
+        return
     if action == "give_up":
         session.serial_flow = None
         await _speak(session, serial_lookup.give_up(lang), lang)

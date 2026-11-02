@@ -115,7 +115,11 @@ def advance(flow: dict, text: str, yes_no: str | None) -> tuple[str, str | None]
             flow["buf"] += digits
             spoken = _read_phone(flow["buf"])
             if spoken is None and len(flow["buf"]) >= 10:
+                n = len(flow["buf"])
                 flow["buf"] = ""  # ten or more digits that are not a mobile number: start over rather than keep adding
+                if n > 10:  # owner, 2026-11-03: the caller is told how many digits were heard ("আপনি এগারোটা নম্বর বলেছেন") and asked to say the number again from the start
+                    flow["tries"] += 1
+                    return ("give_up", None) if flow["tries"] >= MAX_TRIES else ("wrong_count", str(n))
     if spoken:
         flow.update(stage="confirm", phone=spoken, buf="")
         return "confirm", spoken
@@ -142,6 +146,13 @@ ASK_AGAIN = {
     "hi": "नंबर एक बार फिर बताइए? दस अंक, धीरे-धीरे।",
     "en": "Could you say the number once more? Ten digits, slowly please.",
 }
+_BN_COUNT = {11: "এগারো", 12: "বারো", 13: "তেরো", 14: "চোদ্দো", 15: "পনেরো", 16: "ষোলো", 17: "সতেরো", 18: "আঠারো", 19: "উনিশ", 20: "কুড়ি"}
+_HI_COUNT = {11: "ग्यारह", 12: "बारह", 13: "तेरह", 14: "चौदह", 15: "पंद्रह", 16: "सोलह", 17: "सत्रह", 18: "अठारह", 19: "उन्नीस", 20: "बीस"}
+WRONG_COUNT = {
+    "bn": "আপনি {n}টা সংখ্যা বলেছেন, কিন্তু মোবাইল নম্বরে দশটা সংখ্যা থাকে। নম্বরটা আবার প্রথম থেকে বলবেন?",
+    "hi": "आपने {n} अंक बोले, पर मोबाइल नंबर में दस अंक होते हैं। नंबर फिर से शुरू से बताइए?",
+    "en": "You said {n} digits, but a mobile number has ten. Could you say the number again from the start?",
+}
 GIVE_UP = {
     "bn": "দুঃখিত, নম্বরটা ঠিকমতো বুঝতে পারছি না। অনুগ্রহ করে ক্লিনিকের কাউন্টারে বুকিং আইডি দেখিয়ে সিরিয়াল নম্বরটা নিয়ে নেবেন।",
     "hi": "माफ़ कीजिए, मैं नंबर ठीक से समझ नहीं पा रही। कृपया क्लिनिक के काउंटर पर बुकिंग आईडी दिखाकर सीरियल नंबर ले लीजिए।",
@@ -156,6 +167,12 @@ CHECK_FAILED = {
 
 def ask_number(lang: str) -> str:
     return ASK_NUMBER[_lang(lang)]
+
+
+def wrong_count(n: str | int, lang: str) -> str:
+    n = int(n)
+    word = {"bn": _BN_COUNT, "hi": _HI_COUNT}.get(lang, {}).get(n, str(n))
+    return WRONG_COUNT[_lang(lang)].format(n=word)
 
 
 def ask_again(lang: str) -> str:
