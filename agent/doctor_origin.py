@@ -53,3 +53,51 @@ def reply(value: str | None, who: str, lang: str) -> str:
     lg = lang if lang in ("bn", "hi", "en") else "en"
     table = _YES if (value or "").strip().lower() == "yes" else _NO if (value or "").strip().lower() == "no" else _UNKNOWN
     return table[lg].format(who=who)
+
+
+_MANY = {
+    "bn": "কলকাতা থেকে অনেক ডাক্তার আছেন।",
+    "hi": "कोलकाता के कई डॉक्टर हैं।",
+    "en": "Many of our doctors are from Kolkata.",
+}
+_ONE = {
+    "bn": "কলকাতার একজন ডাক্তার আছেন।",
+    "hi": "कोलकाता के एक डॉक्टर हैं।",
+    "en": "One of our doctors is from Kolkata.",
+}
+
+
+def how_many_lead(count: int, lang: str) -> str:
+    """Owner, 2026-11-02 ("কোন ডাক্তার আরে ওই কলকাতা থেকে কে আছে"): no doctor is named, so the answer is how many are from Kolkata (counted from the table's own column), then the question stays open."""
+    lg = lang if lang in ("bn", "hi", "en") else "en"
+    if count >= 2:
+        return _MANY[lg]
+    if count == 1:
+        return _ONE[lg]
+    return ""
+
+
+_KOLKATA_FILTER = re.compile(rf"{_KOLKATA}\S*\s*(?:থেকে|থেকেই|এর|র|ের|লোক|ডাক্তার|কি|के|से)?", re.I)
+
+
+def asks_kolkata_doctors(text: str) -> bool:
+    """A sentence about WHO sits (a department, a day) that also asks for the Kolkata ones: "বুকের ডাক্তার কেউ আছে কলকাতা থেকে"."""
+    t = unicodedata.normalize("NFC", text or "")
+    return bool(_KOLKATA_FILTER.search(t)) and not _NOT_ABOUT_DOCTOR.search(t)
+
+
+_FILTER_YES = {
+    "bn": "হ্যাঁ, কলকাতার ডাক্তার আছেন।",
+    "hi": "जी हाँ, कोलकाता के डॉक्टर हैं।",
+    "en": "Yes, there are doctors from Kolkata.",
+}
+_FILTER_NO = {
+    "bn": "না, {label} বিভাগের কেউ কলকাতার নন।",
+    "hi": "नहीं, {label} विभाग का कोई डॉक्टर कोलकाता से नहीं है।",
+    "en": "No, nobody in {label} is from Kolkata.",
+}
+
+
+def filter_lead(found: bool, label: str, lang: str) -> str:
+    lg = lang if lang in ("bn", "hi", "en") else "en"
+    return _FILTER_YES[lg] if found else _FILTER_NO[lg].format(label=label)

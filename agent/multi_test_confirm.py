@@ -60,6 +60,31 @@ def plan(results: list[tuple[str, dict]], lang: str):
     return (_CONFIRM.get(lang, _CONFIRM["bn"]).format(names=names), [c for c, _ in pairs])
 
 
+_ASK_REST = {
+    "bn": "আমি বুঝেছি: {names}। আর একটা টেস্টের নাম ঠিক বুঝতে পারিনি। সবগুলোর নাম একবার বলবেন? তাহলে টোটাল বলে দেব।",
+    "hi": "मैं समझी: {names}। एक और टेस्ट का नाम ठीक से नहीं समझी। सभी के नाम एक बार बताइए, फिर टोटल बता दूँगी।",
+    "en": "I understood: {names}. I did not catch the name of one more test. Could you say all the tests once more? Then I will give you the total.",
+}
+
+
+def ask_back(results: list[tuple[str, dict]], lang: str):
+    """Owner, 2026-11-02: some tests were understood and one has no sound-alike at all -- never "no test called X". What was understood is read back and ALL the names are asked for again."""
+    if len(results) < 2:
+        return None
+    spoken: list[str] = []
+    lost = 0
+    for requested, result in results:
+        if result.get("found"):
+            spoken.append(result.get({"bn": "test_name_bn", "hi": "test_name_hi"}.get(lang, "test_name")) or requested)
+        elif result.get("did_you_mean") and not result.get("ambiguous"):
+            spoken.append(_spoken(lang, result, requested, 0))
+        else:
+            lost += 1
+    if not lost or not spoken:
+        return None
+    return _ASK_REST.get(lang, _ASK_REST["bn"]).format(names=_AND.get(lang, _AND["en"]).join(spoken))
+
+
 # ---------------------------------------------------------------------------------------------------------------------------------
 # A test the recogniser lost ENTIRELY. Real call 2026-10-17: "CBC, uric acid, thyroid -- all three together" came back with two names;
 # the CBC was never heard. Reading back only the two would quietly drop a third of the question. The caller said HOW MANY tests they

@@ -48,6 +48,13 @@ def _tokens(text: str) -> list[str]:
     return _TOKEN.findall(unicodedata.normalize("NFC", text or "").lower())
 
 
+# Owner, 2026-11-02 ("সামনের রোববার মাথার ডাক্তার" was answered for Dermatology: "সামনের" sounds like "স্কিনের"): day and time words are never the department.
+_NOT_DEPT = frozenset(
+    "সামনের সামনে আগামী আগামীকাল আজকে আজ কালকে কাল পরশু পরশুদিন সকালে সকালবেলা সকালের বিকালে বিকেলে বিকালবেলা সন্ধ্যায় সন্ধ্যা রাতে দুপুরে রোববার রবিবার সোমবার মঙ্গলবার বুধবার বৃহস্পতিবার শুক্রবার শনিবার "
+    "অনেকদিন আপনাদের ওখানে ডাক্তার ডাক্তারের ডাক্তারবাবু दिन सुबह शाम आगे अगले सोमवार मंगलवार बुधवार गुरुवार शुक्रवार शनिवार रविवार".split()
+)
+
+
 def dept_in_text(text: str) -> str | None:
     """The department the sentence names (English name), else None: a department word, or a recogniser's garble of one (same consonants: "অর্থপেটি" ~ "অর্থোপেডিক্স"). The most specific wins when two are named."""
     toks = _tokens(text)
@@ -58,6 +65,8 @@ def dept_in_text(text: str) -> str | None:
         for w in words:
             wl = unicodedata.normalize("NFC", w).lower()
             for t in toks:
+                if t in _NOT_DEPT:
+                    continue
                 if t == wl or (len(wl) >= 5 and len(t) >= 5 and (t.startswith(wl) or wl.startswith(t))):
                     score = 1.0 + len(wl) / 100.0
                 elif len(wl) >= 5 and len(t) >= 5 and not (t.isascii() and wl.isascii()):

@@ -903,6 +903,11 @@ class FastPath:
                 return None
 
         if wants_rate:
+            from agent import multi_question as _mq
+
+            if _mq.is_one_total_question(text):
+                self._abstain("multi_test", "test_rate", lang)  # owner, 2026-11-02: several tests, one total -- the model names them, the first one is not guessed from the cue words
+                return None
             name, form, score = self.catalogue.match(text, "test", lang, COMMIT_FLOOR)
             if name and score >= COMMIT_FLOOR and self._ambiguous_test(text, lang, table, score):
                 self._abstain("ambiguous_test", "test_rate", lang)

@@ -20,12 +20,25 @@ MAX_PARTS = 4
 MIN_WORDS = 2
 
 
+_TOTAL_WORD = re.compile(r"\b(?:together|total|both|combined|altogether)\b|টোটাল|একসাথে|একসঙ্গে|সব মিলিয়ে|মিলিয়ে|एक साथ|टोटल|कुल", re.I)
+_RATE_WORD = re.compile(r"\b(?:rate|rates|price|cost|charges?|how much)\b|রেট|দাম|খরচ|কত|টাকা|रेट|कीमत|कितना|कितने", re.I)
+_TWO_THINGS = re.compile(r"\b(?:and|plus|with)\b|,|আর|এবং|ও\s|और|तथा", re.I)
+
+
+def is_one_total_question(text: str) -> bool:
+    """Owner, 2026-11-02 ("what is the test rate of A and lipid profile together"): ONE price question about several tests, said with a joining word and "together" -- not two questions."""
+    t = text or ""
+    return bool(_TOTAL_WORD.search(t) and _RATE_WORD.search(t) and _TWO_THINGS.search(t))
+
+
 def split_questions(text: str) -> list[str]:
     """The text cut into parts at question marks and joining words; a part of fewer than two words is glued back onto its neighbour (so "ও" or "তো" inside a sentence does not
     shred it). One part comes back when there is nothing to cut."""
     text = " ".join((text or "").split())
     if not text:
         return []
+    if is_one_total_question(text):
+        return [text]
     raw: list[str] = []
     for chunk in _QMARK.split(text):
         raw.extend(p.strip(" ,।.") for p in _JOINERS.split(f" {chunk} "))

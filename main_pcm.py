@@ -3422,6 +3422,10 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
             # Real call 2026-10-17: names the recogniser garbled ("ক্রিকাসিড", "থাইরাইড টেস্ট") have sound-alikes the clinic knows. They are
             # READ BACK once, and priced only after a yes (a near match suggests, it never resolves).
             confirm = multi_test_confirm.plan(results, lang)
+            if confirm is None:
+                _ask_rest = multi_test_confirm.ask_back(results, lang)
+                if _ask_rest:
+                    return _ask_rest
             if confirm is not None and _suggested.get() is None:
                 question, canonical = confirm
                 _suggested.set({"intent": "test_rate", "slot": "test_names", "slots": {}, "name": canonical})
@@ -4398,6 +4402,29 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
                 return False  # a doctor is named: the normal path
     on_date = when.date if wants_when and wants_book else None
     at_time = when.time if wants_when and wants_book else None
+    if on_date and weekday_cues.weekday_of(text) is not None and re.search(r"(?:কাল|আজ|পরশু)\S*\s*(?:না|নয়|নাহ)(?!\S)", text):
+        on_date = weekday_cues.resolve_date(text, slot_proposal.clinic_now().date()) or on_date  # owner, 2026-11-02: "কালকে না ... বুধবার" -- the day taken back is not the day
+    return await _dept_day_listing(session, text, lang, sex, on_date, at_time)
+
+def _kolkata_sitting(sitting: list, label: str, lang: str) -> tuple[list, str]:
+    """Owner, 2026-11-02 ("বৃহস্পতিবার সকালে বুকের ডাক্তার কেউ আছে কলকাতা থেকে"): of the doctors who sit, the ones the table says are from Kolkata, with the yes; none -> the no, and everybody who sits is listed."""
+    if _fast_path is None:
+        return sitting, ""
+    kept = []
+    for item in sitting:
+        info = None
+        with contextlib.suppress(Exception):
+            info = _fast_path.catalogue.doctor_info(item.get("full_name") or item.get("name") or "") or _fast_path.catalogue.doctor_info(item.get("name") or "")
+        if info and (info.get("from_kolkata") or "").strip().lower() == "yes":
+            kept.append(item)
+    if kept:
+        return kept, doctor_origin.filter_lead(True, label, lang)
+    return sitting, doctor_origin.filter_lead(False, label, lang)
+
+
+async def _dept_day_listing(session: CallSession, text: str, lang: str, sex: str | None, on_date: str | None, at_time: str | None) -> bool:
+    """The doctors of the department the sentence is about, on one day (and time): who sits, asked which one -- or nobody, and who sits next. (Cut out of _dept_search_turn so a weekday question with no doctor named
+    but a problem or a department in it, owner 2026-11-02, is answered the same way.) False when nothing was said."""
     try:
         result = await _tools.department_doctors(text, lang, sex=sex, on_date=on_date, at_time=at_time)
     except ToolCallError:
@@ -4420,14 +4447,17 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
                 return await _day_part_sitting_reply(session, text, lang, result["department_name"])
             sitting = _avail
         phrase_when = _when_phrase(on_date, at_time, lang)
+        kol_lead = ""
+        if sitting and doctor_origin.asks_kolkata_doctors(text):
+            sitting, kol_lead = _kolkata_sitting(sitting, label, lang)
         if len(sitting) == 1:
             item = sitting[0]
-            say = slot_proposal.sits_statement(item["name"], on_date, at_time or item.get("start") or "", lang)
+            say = (kol_lead + " " if kol_lead else "") + slot_proposal.sits_statement(item["name"], on_date, at_time or item.get("start") or "", lang)
             session.dept_pending = {"kind": "confirm_one", "doctor": item, "date": on_date, "time": at_time, "turn": session.turn_count, "say": say}
             await _speak(session, say, lang)
             return True
         if len(sitting) > 1:
-            say = doctor_search.sitting_pick_question([s["name"] for s in sitting], phrase_when, lang, items=sitting, dept_label=label)
+            say = (kol_lead + " " if kol_lead else "") + doctor_search.sitting_pick_question([s["name"] for s in sitting], phrase_when, lang, items=sitting, dept_label=label)
             session.dept_pending = {"kind": "pick", "doctors": sitting, "date": on_date, "time": at_time, "turn": session.turn_count, "say": say}
             await _speak(session, say, lang)
             return True
@@ -4551,6 +4581,10 @@ async def _answer_bare_repeat(session: CallSession, text: str, lang: str) -> boo
     front of the next reply and the booking goes on; otherwise it is the whole answer, with the sentence said again. Returns True when the turn was answered here."""
     last = getattr(session, "last_spoken", "") or ""
     if not last or not text or len(text.split()) > 5 or lang not in ("bn", "hi", "en"):
+        return False
+    if text.isascii() and not last.isascii():
+        lang = language_of_script(last, lang)  # owner, 2026-11-02: "c i d road" (letters in Latin) after a Bengali address is answered in the language of that address
+    if lang not in ("bn", "hi", "en"):
         return False
     b = session.booking
     if b is not None and (b.stage != "collecting" or b.phone_buffer):
@@ -4706,6 +4740,8 @@ async def _answer_word_check(session: CallSession, text: str, lang: str) -> bool
         return True
     last = getattr(session, "last_spoken", "") or ""
     low = " ".join(text.lower().split())
+    if doctor_origin.asks_doctor_origin(text, has_context=True) and not any(c in low for c in _CHECK_CUES):
+        return False  # owner, 2026-11-02 ("রুপা মজুমদার কি কলকাতার" was taken for the name said back): a question about the doctor is answered from the table, not echoed
     if not last or len(low.split()) > 10:
         return False
     # Digits being said (a phone number answered in pieces: "বাকিটা হচ্ছে ফাইভ সিক্স…") are an answer, never a word asked back -- real call 2026-10-23: the digits were thrown away twice
@@ -4800,7 +4836,14 @@ async def _answer_doctor_origin(session: CallSession, text: str, lang: str) -> b
                     canonical = hit[0] if hit and hit[0] else None
     info = cat.doctor_info(canonical) if canonical else None
     if info is None:
-        await _speak(session, missing_slot_prompt("doctor_availability", "doctor_name", lang), lang)
+        _rows: dict = {}
+        with contextlib.suppress(Exception):
+            for _v in cat._doctor_info.values():  # noqa: SLF001
+                _rows[_v.get("full_name") or _v.get("full_name_bn") or id(_v)] = _v
+        _n_kol = sum(1 for _v in _rows.values() if (_v.get("from_kolkata") or "").strip().lower() == "yes")
+        _lead = doctor_origin.how_many_lead(_n_kol, lang)
+        _ask = missing_slot_prompt("doctor_availability", "doctor_name", lang)
+        await _speak(session, f"{_lead} {_ask}".strip(), lang)
         return True
     if named:
         who = {"bn": f"ডাঃ {info.get('full_name_bn') or ''}".strip(), "hi": f"डॉक्टर {info.get('full_name_hi') or ''}".strip(), "en": "the doctor"}.get(lang, "the doctor")
@@ -5081,6 +5124,12 @@ async def _answer_day_availability(session: CallSession, text: str, lang: str) -
     if session.booking is not None and session.booking.stage == "collecting" and not named_here:
         return False
     name = _enquiry_doctor(session, text, lang)
+    if not name and session.booking is None and _tools is not None:
+        # Owner, 2026-11-02 ("হাটু ব্যথা ... পায়ের হাড়ের ডাক্তার ... বুধবার আছে", "সামনের রোববার মাথার ডাক্তার"): a day and a problem or a department, no doctor: the department's doctors on that day, never "which doctor?"
+        with contextlib.suppress(ToolCallError):
+            _routed = await _route_dept(text, lang, session)
+            if _routed.get("matched") and await _dept_day_listing(session, text, lang, doctor_search.wanted_sex(text), date_iso, None):
+                return True
     if not name:
         session.pending_day = (session.turn_count, date_iso)
         await _speak(session, missing_slot_prompt("doctor_availability", "doctor_name", lang), lang)
@@ -5092,7 +5141,7 @@ async def _answer_day_availability(session: CallSession, text: str, lang: str) -
 async def _speak_sitting_hours(session: CallSession, name: str, lang: str) -> bool:
     """The doctor's sitting hours FROM and TO, on the day told (else his next sitting day), from the schedule table. False (nothing said) when they cannot be told."""
     ctx = session.last_doctor_enquiry or {}
-    date_iso = ctx.get("date") or (session.booking.slots.get("date") if session.booking is not None else None)
+    date_iso = ctx.get("date") or (session.booking.slots.get("date") if session.booking is not None else None) or _context_date(session)
     try:
         info = await _tools.get_doctor_availability(name, date_iso)
         if info.get("found") and not info.get("available") and info.get("next_available_date"):
@@ -5271,11 +5320,31 @@ async def _answer_next_serial(session: CallSession, text: str, lang: str) -> boo
         session.pending_serial = (session.turn_count, day)
         await _speak(session, missing_slot_prompt("doctor_availability", "doctor_name", lang), lang)
         return True
-    return await _speak_next_serial(session, name, day, lang)
+    _ctx_day = None if _SAYS_A_DAY.search(text) else _context_date(session)
+    return await _speak_next_serial(session, name, day, lang, on_iso=_ctx_day)
 
 
-async def _speak_next_serial(session: CallSession, name: str, day: str, lang: str) -> bool:
+_SAYS_A_DAY = re.compile(r"আজ|কাল|পরশু|আগামী|আগামিকাল|\b(?:today|tomorrow|aaj|aj|kal|kaal)\b|आज|कल|परसों|सोমবার|সোমবার|মঙ্গলবার|বুধবার|বৃহস্পতিবার|শুক্রবার|শনিবার|রবিবার|রোববার", re.I)
+
+
+def _context_date(session: CallSession) -> str | None:
+    """Owner, 2026-11-02 ("রুপা মজুমদার কটায় বসছে সকালে ... সেরিয়াল" right after "আগামীকাল সকালে পেডিয়াট্রিক্স বিভাগে বসছেন ..." was answered for TODAY): the day the conversation is about -- the doctor just
+    told about, else the day of the doctors just offered. None when there is none."""
+    ctx = session.last_doctor_enquiry or {}
+    if ctx.get("date") and booking_carryover.recent(ctx, session.turn_count):
+        return str(ctx["date"])
+    pend = getattr(session, "dept_pending", None)
+    if pend and pend.get("date") and session.turn_count - pend["turn"] <= _PICK_MEMORY_TURNS:
+        return str(pend["date"])
+    return None
+
+
+async def _speak_next_serial(session: CallSession, name: str, day: str, lang: str, on_iso: str | None = None) -> bool:
     on = slot_proposal.clinic_now().date() + datetime.timedelta(days=1 if day == "tomorrow" else 0)
+    if on_iso:
+        with contextlib.suppress(ValueError):
+            on = datetime.date.fromisoformat(on_iso)
+            day = "tomorrow" if on > slot_proposal.clinic_now().date() else "today"
     try:
         r = await _tools.next_serial(name, on.isoformat())
     except ToolCallError as e:
@@ -6206,6 +6275,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         lang = _resolve_reply_language(
             session, lang, lang_decisive, float(getattr(asr_result, "decoder_agreement", 1.0) or 0.0), asr_result.text
         )  # what the AGENT replies in -- sticky; see the function
+        if detected_lang == "en" and lang != "en" and not session.lang_explicit and _clearly_english(asr_result.text or "", float(getattr(asr_result, "decoder_agreement", 1.0) or 0.0)):
+            lang = "en"  # this turn only: the call's own language is not moved
         _heard = (asr_result.text or "").strip()
         _digits_said, _digit_hits, _digit_total = booking_capture.read_digits(_heard)
         _short_booking_answer = (
@@ -9017,6 +9088,22 @@ def _wholly_hindi(text: str, agreement: float) -> bool:
     # Owner, 2026-10-31: "if the user started in Hindi, continue in Hindi until the user specifically asks to change" -- the first sentence of a call, Hindi from end to end, is enough to open the call in Hindi
     # (two words, decoders agreeing at 0.75): "मैं हिंदी कहना चाहता हूं" used to fall short and the call went back to Bengali on the next turn.
     return len(words) >= 2 and script_share(text, "hi") >= 0.95 and agreement >= 0.75
+
+
+_EN_FUNCTION_WORDS = frozenset(
+    "what is the of and to a an for in do you have can i my me how much at on it are this that with please tell when where which who does will would could the rate price cost test doctor "
+    "appointment book together total about there any your our from is was be get want need".split()
+)
+
+
+def _clearly_english(text: str, agreement: float) -> bool:
+    """Owner, 2026-11-02 (a whole question in English answered in Bengali): a long, wholly Latin sentence the recogniser agrees on, most of whose words are plain English. Seven words or more -- a short garbled
+    guess ("hano parking a chair") never counts."""
+    toks = re.findall(r"[A-Za-z']+", text or "")
+    if len(toks) < 7 or agreement < 0.6 or not (text or "").isascii():
+        return False
+    plain = sum(1 for t in toks if t.lower() in _EN_FUNCTION_WORDS)
+    return plain >= 4 and plain * 100 >= len(toks) * 45
 
 
 def _resolve_reply_language(session: CallSession, detected_lang: str, decisive: bool = True, agreement: float = 1.0, text: str = "") -> str:

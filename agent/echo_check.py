@@ -52,6 +52,46 @@ def skeleton(word: str) -> str:
     return re.sub(r"(.)\1+", r"\1", s)  # a doubled consonant is one sound
 
 
+# Owner, 2026-11-02: "c i d road" (spelled letters, the recogniser wrote them in Latin) asked back "সি আই টি রোড" (the same letters as the agent said them). A run of letters is one word, written the same
+# way on both sides: "zq" + the letters (d and t are folded -- they are one sound on a telephone line).
+_LETTER_NAMES = {
+    "এ": "a", "বি": "b", "সি": "c", "ডি": "d", "ই": "e", "এফ": "f", "জি": "g", "এইচ": "h", "আই": "i", "জে": "j", "কে": "k", "এল": "l", "এম": "m", "এন": "n", "ও": "o", "পি": "p", "কিউ": "q",
+    "আর": "r", "এস": "s", "টি": "t", "ইউ": "u", "ভি": "v", "ডাবলিউ": "w", "এক্স": "x", "ওয়াই": "y", "জেড": "z",
+    "ए": "a", "बी": "b", "सी": "c", "डी": "d", "ई": "e", "एफ": "f", "जी": "g", "एच": "h", "आई": "i", "जे": "j", "के": "k", "एल": "l", "एम": "m", "एन": "n", "ओ": "o", "पी": "p", "क्यू": "q",
+    "आर": "r", "एस": "s", "टी": "t", "यू": "u", "वी": "v", "डब्ल्यू": "w", "एक्स": "x", "वाई": "y", "ज़ेड": "z",
+}
+
+
+def _letter(tok: str) -> str | None:
+    t = (tok or "").strip().lower()
+    if len(t) == 1 and "a" <= t <= "z":
+        return t
+    return _LETTER_NAMES.get(unicodedata.normalize("NFC", tok or "").strip())
+
+
+def fold_letter_runs(tokens: list[str]) -> tuple[list[str], dict[str, str]]:
+    """Runs of single letters (three or more spoken names, or two or more Latin letters) become one token; `back` says what each stood for."""
+    out: list[str] = []
+    back: dict[str, str] = {}
+    i = 0
+    while i < len(tokens):
+        j = i
+        letters: list[str] = []
+        while j < len(tokens) and _letter(tokens[j]) is not None:
+            letters.append(_letter(tokens[j]))  # type: ignore[arg-type]
+            j += 1
+        latin_run = all(len(tokens[k]) == 1 and tokens[k].isascii() for k in range(i, j))
+        if letters and len(letters) >= (2 if latin_run else 3):
+            tok = "zq" + "".join("t" if c == "d" else c for c in letters)
+            back[tok] = " ".join(tokens[i:j])
+            out.append(tok)
+            i = j
+        else:
+            out.append(tokens[i])
+            i += 1
+    return out, back
+
+
 def _tokens(text: str) -> list[str]:
     return [t for t in re.split(r"[\s,।.?!;:\-()\"']+", unicodedata.normalize("NFC", text or "")) if t]
 
@@ -90,7 +130,7 @@ def find(user_text: str, last_spoken: str, bare: bool = False) -> tuple[str, str
     sound, exact on the skeleton or a very close one for a longer word. The cue words themselves ("কেয়া", "ঠিক") are never the thing looked for."""
     if not user_text or not last_spoken:
         return None
-    said = _tokens(user_text)
+    said, _back_user = fold_letter_runs(_tokens(user_text))
     # bare=True (owner, 2026-11-01): the caller just SAYS back a word or phrase of the agent's last reply, with no "কেয়া / ঠিক / did you say" -- "অরুণ কুমার", "ছয়শো টাকা". Only a short
     # sentence, and every content word of it must be found in what the agent said.
     if not 1 <= len(said) <= (5 if bare else 8) or (not bare and not asks_back(user_text)):
@@ -98,15 +138,20 @@ def find(user_text: str, last_spoken: str, bare: bool = False) -> tuple[str, str
     cue_skeletons = {skeleton(c) for c in _CUES if c != "?"} | {""}
     spoken_sentences = [s.strip() for s in re.split(r"(?<=[।.?!])\s+", last_spoken) if s.strip()] or [last_spoken]
     best = None
+    best_spoken_words = None
+    _back_spoken: dict[str, str] = {}
     for words, sk in _candidates(said):
         if sk in cue_skeletons:
             continue
         for sentence in spoken_sentences:
-            for _w, sk2 in _candidates(_tokens(sentence)):
+            _stoks, _bk = fold_letter_runs(_tokens(sentence))
+            _back_spoken.update(_bk)
+            for _w, sk2 in _candidates(_stoks):
                 ratio = 1.0 if sk == sk2 else difflib.SequenceMatcher(None, sk, sk2).ratio()
                 need = 1.0 if min(len(sk), len(sk2)) <= 4 else 0.86
                 if ratio >= need and (best is None or ratio > best[0] or (ratio == best[0] and len(sk) > len(best[3]))):
                     best = (ratio, words, sentence, sk)
+                    best_spoken_words = _w
     if best is None:
         return None
     # the words asked back must be most of what was said: one matching word inside a long ordinary question ("… কি বাড়ি গিয়ে নমুনা সংগ্রহ করেন") is not it
@@ -115,4 +160,9 @@ def find(user_text: str, last_spoken: str, bare: bool = False) -> tuple[str, str
         return None
     if bare and len([t for t in best[1].split() if t.lower() not in _STOP]) < len(content):
         return None  # a bare repeat is ONLY the agent's own words: one matching word inside a different sentence is not an echo
-    return best[1], best[2]
+    words_out = best[1]
+    if "zq" in words_out and best_spoken_words:
+        words_out = best_spoken_words
+        for tok, original in _back_spoken.items():
+            words_out = words_out.replace(tok, original)
+    return words_out, best[2]
