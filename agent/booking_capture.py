@@ -278,11 +278,14 @@ def absorb(buffer: str, text: str, asked: bool) -> PhoneStep:
 # ----------------------------------------------------------------------------------------------------------------- name
 
 _NAME_LEADS = (
+    # Owner, 2026-11-02: "নাম হলো সায়ন্তন চৌধুরী" was stored as the name "হলো সায়ন্তন চৌধুরী", "জি আমার নাম ..." was no name at all
+    "জি", "ji", "ওকে", "ঠিকাছে", "নামটা", "হলো", "হল", "হচ্ছে", "হয়", "হই", "বলছি", "है", "hai",
     "my name is", "my name's", "the name is", "name is", "this is", "it is", "it's", "i am", "i'm", "call me", "patient name is",
     "patient is", "its", "mera naam", "mera nam", "meri naam", "naam hai", "naam", "mera", "main", "mai", "amar naam", "amar nam",
     "amar", "ami", "ঠিক আছে", "হ্যাঁ", "হ্যা", "হাঁ", "আচ্ছা", "yes", "yeah", "haan", "han", "okay", "ok", "हाँ", "हां", "अच्छा", "আমার নাম", "আমার", "আমি", "নাম", "मेरा नाम", "मेरा", "मैं", "मै", "नाम", "पेशेंट का नाम", "मरीज़ का नाम",
 )  # fmt: skip
 _NAME_TAILS = (
+    "নাম", "নামটা", "হচ্ছে", "বলছি",
     "hai", "hain", "है", "हैं", "হয়", "হলো", "হল", "please", "pls", "ji", "जी", "জি", "সাহেব", "thanks", "thank you",
 )  # fmt: skip
 _NOT_A_NAME = frozenset(
@@ -805,6 +808,13 @@ _PROMPTS = {
         "en": "Okay, I have {digits} so far. Please say the rest.",
         "hi": "ठीक है, अभी तक {digits} मिला है। बाकी बताइए।",
         "bn": "ঠিক আছে, এখন পর্যন্ত {digits} পেয়েছি। বাকিটা বলুন।",
+    },
+    # Owner, 2026-11-02 ("নাইন সিক্স থ্রি ডাবল ফাইভ ডাবল এইট টু জিরো ওয়ান" was heard as 8 digits -- the doubles are lost by the recogniser): with only one or two digits missing the caller is told what is
+    # missing and asked to say a repeated digit twice, not "double".
+    "phone_partial_near": {
+        "en": "Okay, I have {digits} so far, {k} more to go. If a digit repeats, please say it twice, like five, five.",
+        "hi": "ठीक है, अभी तक {digits} मिला है, {k} अंक और चाहिए। अगर कोई अंक दोहराया जाता है तो उसे दो बार बोलिए, जैसे पाँच, पाँच।",
+        "bn": "ঠিক আছে, এখন পর্যন্ত {digits} পেয়েছি, আরও {k}টা সংখ্যা বাকি। কোনো সংখ্যা পরপর দুবার থাকলে দুবার করে বলবেন, যেমন পাঁচ, পাঁচ।",
     },
     "phone_invalid": {
         "en": "That does not look like a 10-digit mobile number. Please say it again, digit by digit.",
@@ -1393,7 +1403,7 @@ def _whatsapp_turn(st, text: str, lang: str, plan: "TurnPlan") -> bool:
         if step.status == "partial":
             st.phone_buffer = step.buffer
             plan.speak = (
-                prompt("phone_partial_two" if len(step.buffer) == 2 else "phone_partial_long", lang, n=len(step.buffer), digits=spoken_digit_groups(step.buffer))
+                prompt("phone_partial_two" if len(step.buffer) == 2 else "phone_partial_near" if len(step.buffer) in (8, 9) else "phone_partial_long", lang, n=len(step.buffer), k=10 - len(step.buffer), digits=spoken_digit_groups(step.buffer))
                 if len(step.buffer) == 2 or len(step.buffer) >= 6
                 else partial_prompt(old_buffer, step.buffer, lang)
             )
@@ -1519,8 +1529,10 @@ _BARE_NO_WORDS_FOR_YES = frozenset({"না", "নয়", "নেই", "no", "n
 _NO_ADDRESS = {"না", "নেই", "জানি না", "বলব না", "দেব না", "নয়", "skip", "no", "none", "नहीं", "पता नहीं", "बताऊंगा नहीं", "বলব না", "থাক"}
 
 
+_ANSWER_YES_LEAD = re.compile(r"^(?:(?:হ্যাঁ|হ্যা|হাঁ|হা|জি|আচ্ছা|ওকে|ঠিক আছে|ঠিকাছে|yes|yeah|haan|han|ji|ok|okay|हाँ|हां|जी|अच्छा)[\s,।]+)+", re.I)
+
 _ADDRESS_LEAD = re.compile(
-    r"^(?:আমার\s+|আমাদের\s+)?(?:ঠিকানাটা|ঠিকানা|এড্রেসটা|এড্রেস|অ্যাড্রেস|মেरा\s+पता|मेरा\s+पता|मेरा\s+एड्रेस|पता|एड्रेस|my\s+address|the\s+address|address)\s*(?:হচ্ছে|হলো|হল|হয়|হইলো|হবে|টা|है|हैं|is|:)?\s*[,:\-]?\s*",
+    r"^(?:(?:হ্যাঁ|হ্যা|হাঁ|হা|জি|আচ্ছা|ওকে|ঠিক আছে|ঠিকাছে|yes|yeah|haan|han|ji|ok|okay|हाँ|हां|जी|अच्छा)[\s,।]+)*(?:আমার\s+|আমাদের\s+)?(?:ঠিকানাটা|ঠিকানা|এড্রেসটা|এড্রেস|অ্যাড্রেস|মেरा\s+पता|मेरा\s+पता|मेरा\s+एड्रेस|पता|एड्रेस|my\s+address|the\s+address|address)\s*(?:হচ্ছে|হলো|হল|হয়|হইলো|হবে|টা|है|हैं|is|:)?\s*[,:\-]?\s*",
     re.I,
 )
 
@@ -1530,6 +1542,8 @@ def bare_address(text: str) -> str | None:
     read-back said "ঠিকানা ঠিকানা হচ্ছে রাজারহাট ..." because they were kept."""
     t = " ".join((text or "").split()).strip(" ,.।")
     stripped = _ADDRESS_LEAD.sub("", t, count=1).strip(" ,.।")
+    if not stripped:
+        stripped = _ANSWER_YES_LEAD.sub("", t, count=1).strip(" ,.।")  # "হ্যাঁ বেহালা চৌরাস্তা": the yes is not part of the address
     if stripped:
         t = stripped
     elif _ADDRESS_LEAD.match(t):
@@ -1614,6 +1628,145 @@ def before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan:
     return plan
 
 
+_PHONE_WORD = ("নম্ব", "নাম্ব", "ফোন", "মোবাইল", "number", "phone", "mobile", "नंबर", "फोन", "मोबाइल")
+_AGE_WORD = ("বয়স", "বয়েস", "age", "उम्र")
+_ADDRESS_WORD = ("ঠিকানা", "এড্রেস", "অ্যাড্রেস", "address", "पता")
+_NAME_WORD_EXACT = frozenset({"নাম", "নামটা", "নামটি", "নামের", "নামে", "name", "नाम"})
+_WRONG_CUE = (
+    "ভুল", "wrong", "galat", "গলত", "গলদ", "চেঞ্জ", "চাঞ্জ", "change", "বদল", "পাল্টে", "পাল্টাতে", "পাল্টান", "সংশোধন", "ঠিক নয়", "ঠিক না", "সঠিক নয়", "ঠিক হয়নি", "ঠিক হয় নি",
+    "ग़लत", "गलत", "बदल", "भूल",
+)
+_SET_CUE = frozenset({"হবে", "হলো", "হল", "হয়", "হচ্ছে", "করুন", "করে", "দিন", "লিখুন", "होगा", "है", "is", "will", "be", "to"})
+_TAIL_CUE = ("শেষ", "শেষের", "শেষে", "last", "आखिरी", "अंतिम")
+
+
+_TAIL_COUNT = re.compile(r"(?:শেষের|শেষে|শেষ|last)\s+(?:দুটো|দুটি|দুইটা|তিনটে|তিনটা|তিনটি|চারটে|চারটা|চারটি|পাঁচটা|ছটা|ছয়টা|দুই|তিন|চার|পাঁচ|two|three|four|five|\d)(?:\s+(?:টা|টি|ডিজিট|সংখ্যা|digits?|numbers?))?", re.I)
+
+
+def _apply_phone_fix(old: str | None, digits: str, text: str, pending: bool):
+    """The new 10-digit number the caller's digits make, given the number now on the booking. A whole new number replaces it; the old number said again with a few more digits after it
+    ("... থেকে তো ওটা ওন নাইন সেবেন হবে") replaces the LAST digits; a few digits with "শেষ / last" (or right after being asked which part) replace the last digits. None = nothing usable,
+    "ask" = digits that could be any part: the caller is asked which."""
+    n = len(digits)
+    if n == 0:
+        return None
+    if n == 10:
+        return phone_from_digits(digits)
+    if n > 10:
+        if old and digits.startswith(old):
+            tail = digits[len(old):]
+            return phone_from_digits(old[: 10 - len(tail)] + tail) if 1 <= len(tail) <= 9 else None
+        return phone_from_digits(digits[-10:])  # the whole number said again with something before it
+    lowered = (text or "").lower()
+    if old and (pending or any(c in lowered for c in _TAIL_CUE)):
+        return phone_from_digits(old[: 10 - n] + digits)
+    return "ask" if old else None
+
+
+def confirm_stage_fix(st, text: str, lang: str) -> dict | None:
+    """Owner, 2026-11-02: at the LAST step ("... ঠিক আছে?") the caller can change the number, the name, the age or the address -- often without saying which ("আমি না নম্বারটা ভুল বলেছি", then
+    the old number again and the new last digits). Returns {"say": ...} when a detail was changed (the caller then hears the whole read-back again), {"ask": ...} when the caller is asked
+    which part, {"reopen": field} when the detail is to be asked again, or None when this sentence changes none of them (the normal confirmation handling goes on)."""
+    if st.action != "book_appointment" or st.stage not in ("confirming", "awaiting_charge_confirm"):
+        return None
+    norm = unicodedata.normalize("NFC", (text or "").lower())
+    toks = [w for w in re.split(r"[\s,।|!?.]+", norm) if w]
+    if not toks:
+        return None
+    wrong = any(c in norm for c in _WRONG_CUE)
+    mentions_phone = any(t.startswith(w) for t in toks for w in _PHONE_WORD)
+    # "শেষ তিনটা ওয়ান ওয়ান ওয়ান": the 'last three' is how many digits follow, not three more ones
+    digits = read_digits(_TAIL_COUNT.sub(" ", text))[0]
+    pending = bool(st.slots.get("_phone_fix"))
+    old = st.slots.get("phone")
+
+    # ---- the number
+    if mentions_phone or pending or len(digits) >= 10:
+        if digits and (mentions_phone or pending or wrong or len(digits) >= 10):
+            new = _apply_phone_fix(old, digits, text, pending)
+            if new == "ask":
+                st.slots["_phone_fix"] = "1"
+                return {"ask": {"bn": "আপনি কোন অংশটা বদলাতে চান? পুরো নম্বরটা আবার বলুন, অথবা শেষের কয়েকটা সংখ্যা বলুন।", "hi": "आप कौन सा हिस्सा बदलना चाहते हैं? पूरा नंबर फिर से बताइए, या आखिरी कुछ अंक बताइए।", "en": "Which part would you like to change? Please say the whole number again, or just the last few digits."}.get(lang, "Which part would you like to change?")}
+            if new and new != old:
+                st.slots["phone"], st.slots["_phone_ok"] = new, new
+                for k in ("_phone_pending", "_phone_fix"):
+                    st.slots.pop(k, None)
+                st.phone_buffer = ""
+                return {"say": prompt("phone_heard", lang, value=spoken_digit_groups(new))}
+            if new is None and pending:
+                st.slots.pop("_phone_fix", None)
+        elif mentions_phone and wrong:
+            st.slots["_phone_fix"] = "1"  # the number stays on the booking until the new digits come
+            return {"ask": {"bn": "ঠিক আছে। পুরো নম্বরটা আবার বলুন, অথবা যে অংশটা ভুল সেটা বলুন।", "hi": "ठीक है। पूरा नंबर फिर से बताइए, या जो हिस्सा गलत है वह बताइए।", "en": "Okay. Please say the whole number again, or just the part that is wrong."}.get(lang, "Okay. Please say the number again.")}
+        elif pending:
+            st.slots.pop("_phone_fix", None)  # something else was said: the wait for the digits is over
+
+    # ---- the name
+    has_name_word = any(t in _NAME_WORD_EXACT for t in toks)
+    if has_name_word and (wrong or any(t in _SET_CUE for t in toks)):
+        drop = _NAME_WORD_EXACT | _SET_CUE | _CHANGE_FILLER | {w for w in toks if any(c in w for c in _WRONG_CUE)}
+        left = [w for w in re.split(r"[\s,।|!?]+", unicodedata.normalize("NFC", text or "")) if w and w.lower() not in drop]
+        new_name = candidate_name(" ".join(left)) if left else None
+        if new_name and new_name != st.slots.get("patient_name"):
+            st.slots["patient_name"], st.name_confirmed, st.pending_name = new_name, new_name, None
+            return {"say": prompt("name_heard", lang, value=new_name)}
+        if wrong and not new_name:
+            st.slots.pop("patient_name", None)
+            st.name_confirmed = None
+            return {"reopen": "patient_name"}
+
+    # ---- the age
+    if any(t.startswith(w) for t in toks for w in _AGE_WORD) and (wrong or any(t in _SET_CUE for t in toks) or bare_age(text)):
+        age = bare_age(text)
+        if age:
+            st.slots["patient_age"] = age
+            st.slots.pop("_age_pending", None)
+            return {"say": prompt("age_heard", lang, value=age)}
+        if wrong:
+            st.slots.pop("patient_age", None)
+            return {"reopen": "patient_age"}
+
+    # ---- the address
+    for i, t in enumerate(toks):
+        if any(t.startswith(w) for w in _ADDRESS_WORD):
+            rest = [w for w in toks[i + 1:] if w not in _SET_CUE and w not in _CHANGE_FILLER and not any(c in w for c in _WRONG_CUE)]
+            raw = " ".join(rest).strip()
+            if (wrong or any(x in _SET_CUE for x in toks)) and len(raw) >= 3 and any(ch.isalpha() for ch in raw):
+                st.slots["patient_address"] = raw[:160]
+                st.slots.pop("_ps_pending", None)
+                return {"say": {"bn": "ঠিকানাটা বদলে নিলাম।", "hi": "पता बदल दिया।", "en": "I have changed the address."}.get(lang, "I have changed the address.")}
+            if wrong:
+                st.slots.pop("patient_address", None)
+                return {"reopen": "patient_address"}
+            break
+    return None
+
+
+def answers_asked_detail(st, text: str) -> bool:
+    """Does the sentence, after its yes-words, ANSWER the detail the booking is asking for right now (the name, the age, the address or the number)? Used so that "হ্যাঁ আমার নাম X",
+    "হ্যাঁ বয়স বত্রিশ", "হ্যাঁ ঠিকানা হলো Y" are one answer, not a yes with the rest thrown away."""
+    from agent.booking_flow import missing_required
+
+    if not _active(st):
+        return False
+    missing = missing_required(st)
+    field = missing[0] if missing else None
+    if field is None or field not in st.asked_fields:
+        return False
+    rest = _ANSWER_YES_LEAD.sub("", " ".join((text or "").split()), count=1).strip(" ,.।")
+    if not rest:
+        return False
+    if field == "patient_name":
+        return candidate_name(rest) is not None
+    if field == "patient_age":
+        return bare_age(rest) is not None
+    if field == "patient_address":
+        return bare_address(rest) is not None and confirm_answer(rest, "bn") is None
+    if field == "phone":
+        return read_digits(rest)[1] >= 3
+    return False
+
+
 def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan:
     """Everything the caller's words settle by themselves, decided before the model is asked. `window` = the doctor's chamber
     hours on the booking date as [(start_min, end_min)] when known (to read a bare "ten" as the daytime hour)."""
@@ -1642,8 +1795,13 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
     if st.slots.get("_time_ok") == "pending" and not plan.speak:
         first = (_words(text) or [""])[0]
         if first in _YES_FIRST and confirm_answer(text, lang) != "no" and not any(w in _BARE_NO_WORDS_FOR_YES for w in _words(text)):
-            plan.skip_model, plan.readback_answer = True, True
-            return plan
+            if answers_asked_detail(st, text):
+                # Owner, 2026-11-02 ("হ্যাঁ আমার নাম সায়ন্তন চৌধুরী" -> the name was asked AGAIN): the yes accepts the time, and the rest of the sentence is the answer to the question
+                # that was asked -- it must not be thrown away with the yes.
+                st.slots["_time_ok"] = "yes"
+            else:
+                plan.skip_model, plan.readback_answer = True, True
+                return plan
 
     # 1. A name read back. The read-back already asked the NEXT question (owner, 2026-10-18), so the caller's reaction is a yes (which moves on), a no or a corrected
     #    name, or simply the ANSWER to the next question (digits for the number) -- which is a yes as well.
@@ -1766,7 +1924,7 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
         # a few digits so far: "ok, go on" (a number said in groups). Nearly all of it (6 or more): say what was heard, so a caller who FINISHED a number that came out short
         # knows which digits are missing -- an "ok" alone made them think it was complete (real call 2026-10-18).
         if len(step.buffer) >= 6 or len(step.buffer) == 2:
-            spoken = prompt("phone_partial_long" if len(step.buffer) >= 6 else "phone_partial_two", lang, n=len(step.buffer), digits=spoken_digit_groups(step.buffer))
+            spoken = prompt("phone_partial_near" if len(step.buffer) in (8, 9) else "phone_partial_long" if len(step.buffer) >= 6 else "phone_partial_two", lang, n=len(step.buffer), k=10 - len(step.buffer), digits=spoken_digit_groups(step.buffer))
         else:
             spoken = partial_prompt(old_buffer, step.buffer, lang)  # 3-5 digits: the group just heard is repeated in the pause (owner, 2026-10-28)
         if step.pure:

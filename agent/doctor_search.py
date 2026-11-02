@@ -220,20 +220,26 @@ def grouped_by_part(items: list[dict], lang: str) -> str | None:
     return ", ".join(groups)
 
 
-def sitting_pick_question(names: list[str], when_phrase: str, lang: str, items: list[dict] | None = None) -> str:
+def sitting_pick_question(names: list[str], when_phrase: str, lang: str, items: list[dict] | None = None, dept_label: str | None = None) -> str:
     """Several doctors sit at the asked time: name them and ask which, with a confirmation, never choosing one for the caller. With `items` (the doctors' rows, with their start times) the names
     are told by part of the day."""
     grouped = grouped_by_part(items or [], lang)
+    # Owner, 2026-11-02: the caller is told WHICH department these doctors belong to ("আমাদের কার্ডিওলজি বিভাগে আগামীকাল সকালে বসছেন ...")
+    in_dept = {
+        "bn": f"আমাদের {dept_label} বিভাগে " if dept_label else "",
+        "hi": f"हमारे {dept_label} विभाग में " if dept_label else "",
+        "en": f"In our {dept_label} department, " if dept_label else "",
+    }
     if grouped:
         return {
-            "bn": f"{when_phrase} {grouped}। কার কাছে বুক করব?",
-            "hi": f"{when_phrase} {grouped}। किसके पास अपॉइंटमेंट करूँ?",
-            "en": f"{when_phrase} {grouped}. Whom shall I book?",
+            "bn": f"{in_dept['bn']}{when_phrase} {grouped}। কার কাছে বুক করব?",
+            "hi": f"{in_dept['hi']}{when_phrase} {grouped}। किसके पास अपॉइंटमेंट करूँ?",
+            "en": f"{in_dept['en']}{when_phrase} {grouped}. Whom shall I book?",
         }[lang]
     return {
-        "bn": f"{when_phrase} এই ডাক্তাররা বসেন: {_join(names, lang)}। কার কাছে বুক করব?",
-        "hi": f"{when_phrase} ये डॉक्टर बैठते हैं: {_join(names, lang)}। किसके पास अपॉइंटमेंट करूँ?",
-        "en": f"{when_phrase} these doctors sit: {_join(names, lang)}. Whom shall I book?",
+        "bn": f"{in_dept['bn']}{when_phrase} এই ডাক্তাররা বসেন: {_join(names, lang)}। কার কাছে বুক করব?",
+        "hi": f"{in_dept['hi']}{when_phrase} ये डॉक्टर बैठते हैं: {_join(names, lang)}। किसके पास अपॉइंटमेंट करूँ?",
+        "en": f"{in_dept['en']}{when_phrase} these doctors sit: {_join(names, lang)}. Whom shall I book?",
     }[lang]
 
 

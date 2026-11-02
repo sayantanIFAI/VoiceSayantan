@@ -2512,7 +2512,7 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
     if isinstance(data, dict) and (
         data.get("intent") == "unclear"
         or (
-            data.get("intent") in ("lookup_booking", "smalltalk", "clinic_faq", "reschedule_appointment", "cancel_appointment")
+            data.get("intent") in ("lookup_booking", "smalltalk", "clinic_faq", "reschedule_appointment", "cancel_appointment", "test_rate", "test_prep")
             and booking_carryover.asks_to_book(text)
             and not booking_carryover.mentions_change_or_cancel(text)
         )
@@ -2530,7 +2530,26 @@ async def _resolve_intent(session: CallSession, text: str, lang: str = "bn") -> 
         hint = _doctor_presence_hint(text)
         if hint is not None:
             return hint
-    return _restore_said_given_name(_without_generic_doctor_name(_with_whole_doctor_name(data, text, text_lang, session)), text)
+    data = _restore_said_given_name(_without_generic_doctor_name(_with_whole_doctor_name(data, text, text_lang, session)), text)
+    # Owner, 2026-11-02: a sentence with no test, price or preparation word in it, read as a test question with no test named, is NOT understood -- the caller is asked to say it again,
+    # not asked "which test's rate?".
+    if (
+        isinstance(data, dict)
+        and data.get("intent") in ("test_rate", "test_prep")
+        and not (data.get("slots") or {}).get("test_name")
+        and not (data.get("slots") or {}).get("test_names")
+        and not _TEST_TALK.search(text or "")
+    ):
+        return {**data, "intent": "unclear"}
+    return data
+
+
+_TEST_TALK = re.compile(
+    r"রেট|দাম|কত|টাকা|খরচ|চার্জ|ফি\b|প্রাইস|টেস্ট|পরীক্ষা|রিপোর্ট|স্ক্যান|প্রস্তুতি|খালি পেট|ফাস্টিং|রক্ত|প্রস্রাব|ইউরিন|এক্স[ -]?রে|এমআরআই|সিটি|ইসিজি|"
+    r"रेट|दाम|कीमत|कितन|पैसे|रुपये|टेस्ट|जांच|जाँच|रिपोर्ट|स्कैन|खून|"
+    r"\b(?:rate|rates|price|cost|fee|fees|charge|test|tests|scan|report|blood|urine|x-?ray|mri|ecg|prep|preparation|fasting|how much)\b",
+    re.I,
+)
 
 
 def _restore_said_given_name(data, text: str):
@@ -4408,7 +4427,7 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
             await _speak(session, say, lang)
             return True
         if len(sitting) > 1:
-            say = doctor_search.sitting_pick_question([s["name"] for s in sitting], phrase_when, lang, items=sitting)
+            say = doctor_search.sitting_pick_question([s["name"] for s in sitting], phrase_when, lang, items=sitting, dept_label=label)
             session.dept_pending = {"kind": "pick", "doctors": sitting, "date": on_date, "time": at_time, "turn": session.turn_count, "say": say}
             await _speak(session, say, lang)
             return True
@@ -4567,6 +4586,53 @@ async def _answer_bare_repeat(session: CallSession, text: str, lang: str) -> boo
         "en": f"Yes, {words}. Once more: {sentence}",
     }[lang]
     await _speak(session, spoken, lang)
+    return True
+
+
+_THESE_DOCTORS = re.compile(
+    r"(?<!\S)(?:এরা|এঁরা|এনারা|এঁনারা|ওনারা|ওরা|এরাই|সবাই|সব|সকলে|সকলেই|এনাদের|এঁদের|এদের|ওদের)(?!\S)|(?<!\S)(?:ये|यह|सब|सभी|ये सब)(?!\S)|\b(?:these|all of them|they all|are they all)\b", re.I
+)
+_THESE_YES = {
+    "bn": "হ্যাঁ, এঁরা সবাই {dept} বিভাগের ডাক্তার।",
+    "hi": "हाँ, ये सभी {dept} विभाग के डॉक्टर हैं।",
+    "en": "Yes, they are all {dept} doctors.",
+}
+_THESE_NO = {
+    "bn": "এঁরা {dept} বিভাগের ডাক্তার।",
+    "hi": "ये {dept} विभाग के डॉक्टर हैं।",
+    "en": "They are {dept} doctors.",
+}
+_THESE_ASK = {
+    "pick": {"bn": "কার কাছে বুক করব?", "hi": "किसके पास अपॉइंटमेंट करूँ?", "en": "Whom shall I book?"},
+    "confirm_one": {"bn": "ওনার সাথে বুক করব?", "hi": "उनके साथ बुक करूँ?", "en": "Shall I book with them?"},
+}
+
+
+async def _answer_these_doctors_dept(session: CallSession, text: str, lang: str) -> bool:
+    """Owner, 2026-11-02 ("এরা কি সব কার্ডিওলজি নাকি বুকের ডাক্তার এরা" after the list of cardiologists was answered with ONE doctor's day): "are these all <department>?" about the doctors just offered is
+    answered from the department they were offered for -- "হ্যাঁ, এঁরা সবাই কার্ডিওলজি বিভাগের ডাক্তার।" -- and the open question (whom to book) is asked again. A different department named is
+    told the department they really belong to. Nothing is said when no doctors were just offered or no department is named."""
+    if lang not in ("bn", "hi", "en") or len(text.split()) > 14 or not _THESE_DOCTORS.search(text):
+        return False
+    pend = getattr(session, "dept_pending", None)
+    route = getattr(session, "last_route", None) or {}
+    topic = getattr(session, "dept_topic", None) or route.get("dept")
+    offered = bool(pend and pend.get("kind") in ("pick", "confirm_one")) or bool(route.get("names"))
+    if not topic or not offered:
+        return False
+    named = dept_talk.dept_in_text(text)
+    if named is None and off_topic.has_health_word(text) and _tools is not None:
+        with contextlib.suppress(Exception):
+            named = (await _route_dept(text, lang, session)).get("department_name")  # "বুকের ডাক্তার" is the chest = Cardiology
+    if not named:
+        return False
+    label = _dept_label(topic, lang)
+    first = (_THESE_YES if named == topic else _THESE_NO)[lang].format(dept=label)
+    kind = pend["kind"] if pend and pend.get("kind") in _THESE_ASK else "pick"
+    if pend:
+        pend["turn"] = session.turn_count  # the doctors stay the subject
+    logger.info("[%s] the caller asked whether the doctors just offered are %s: %s", session.call_id, named, "yes" if named == topic else f"no, {topic}")
+    await _speak(session, f"{first} {_THESE_ASK[kind][lang]}", lang)
     return True
 
 
@@ -6662,6 +6728,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
     if not confirmed_entity:
         if await _answer_bare_repeat(session, text, lang):
             return  # the caller said back a phrase of our last reply: confirmed (owner, 2026-11-01)
+        if await _answer_these_doctors_dept(session, text, lang):
+            return  # "এরা কি সব কার্ডিওলজি?" about the doctors just offered (owner, 2026-11-02)
         # OWNER'S INSTRUCTION, 2026-10-12: the answer to "is it blood, urine, or imaging?" (asked below, in the
         # "does not know the name at all" branch) is read here, FIRST -- before anything else gets a chance to
         # treat this turn as a fresh question. A category answer that doesn't match any of the three, or is
@@ -7935,7 +8003,7 @@ def _next_question(session: CallSession, st, intent: str, missing: list[str], la
     st.asked_fields.update(fields)
     if fields[0] == "phone" and st.phone_buffer:
         # a number heard in part: say what was heard and ask for the rest, not the opening question again
-        return booking_capture.prompt("phone_partial_long", lang, n=len(st.phone_buffer), digits=spoken_digit_groups(st.phone_buffer))
+        return booking_capture.prompt("phone_partial_near" if len(st.phone_buffer) in (8, 9) else "phone_partial_long", lang, n=len(st.phone_buffer), k=10 - len(st.phone_buffer), digits=spoken_digit_groups(st.phone_buffer))
     if not grouped and fields[0] == "patient_name" and (st.slots.get("phone") or getattr(st, "phone_declined", False)):
         return _NAME_ONLY.get(lang, _NAME_ONLY["en"])  # the number is already known: ask only for the name
     return grouped or missing_slot_prompt(intent, fields[0], lang)
@@ -8097,6 +8165,20 @@ async def _handle_booking_confirmation_turn(session: CallSession, text: str, lan
     rather than guessing which the caller meant."""
     st = session.booking
     assert st is not None
+    # Owner, 2026-11-02: at the last step the caller may change the number, name, age or address (often without saying which part) -- understood here, before the yes / no reading.
+    fix = booking_capture.confirm_stage_fix(st, text, lang)
+    if fix is not None:
+        _note(session, "corrections")
+        logger.info("[%s] a detail changed at the confirmation: %s", session.call_id, next(iter(fix)))
+        if "ask" in fix:
+            await _speak(session, fix["ask"], lang)
+            return
+        if "reopen" in fix:
+            st.stage = "collecting"
+            await _speak(session, _next_question(session, st, st.action, missing_required(st), lang), lang)
+            return
+        await _speak(session, f"{fix['say']} {booking_confirmation_readback(st.slots, st.action, lang)}", lang)
+        return
     answer = classify_yes_no(text, lang)
 
     if answer is None:
