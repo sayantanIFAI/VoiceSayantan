@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import glob
 import logging
 import os
 import threading
@@ -18,7 +19,7 @@ def ingest_once(cfg: Config, store: Store) -> dict:
     stats = {"log_events": 0, "calls": 0, "live": 0}
     today = clinic_today()
 
-    for path in cfg.log_files:
+    for path in sorted({p for pattern in cfg.log_files for p in glob.glob(pattern)}):
         inode, offset, head = store.get_source(path)
         events, inode, offset, head = logparse.read_new(path, inode, offset, head, cfg.keep_transcripts)
         if events:

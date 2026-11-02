@@ -368,3 +368,24 @@ def test_the_gateway_routes_the_dashboard_behind_the_login_and_the_pod_starts_it
     start = _read("deploy", "start_all.sh")
     assert re.search(r"start\s+dashboard\s+8890\s+/workspace/logs/dashboard\.log", start)
     assert "-m dashboard" in start
+
+
+def test_archived_logs_are_read_through_a_glob_pattern(tmp_path):
+    """The deploy scripts keep the log of each run in logs/archive/<time>/; a restart empties the live log, so the past transcripts live there."""
+    cfg = _cfg(tmp_path)
+    archive = tmp_path / "logs" / "archive" / "20261101-050148"
+    archive.mkdir(parents=True)
+    live = open(cfg.log_files[0], encoding="utf-8").read()
+    (archive / "pcm_app.log").write_text(live, encoding="utf-8")
+    open(cfg.log_files[0], "w", encoding="utf-8").close()  # the live log was emptied by the restart
+    import dataclasses
+
+    cfg = dataclasses.replace(
+        cfg, log_files=(cfg.log_files[0], str(tmp_path / "logs" / "archive" / "*" / "pcm_app.log"))
+    )
+    store = Store(cfg.db_path)
+    first = ingest.ingest_once(cfg, store)
+    assert first["log_events"] > 0
+    c = store.list_calls(2, "", "transferred", 1, clinic_today())[0]
+    assert any(t["kind"] == "heard" for t in store.call_detail(c["day"], c["call_id"])["log"])
+    assert ingest.ingest_once(cfg, store)["log_events"] == 0  # an archived log is read once

@@ -20,7 +20,7 @@ what the agent already writes:
 |---|---|
 | `/workspace/call_journal/YYYY-MM-DD.jsonl`, `inflight/` (`CALL_JOURNAL_DIR`) | outcome, language, intents, re-asks, hand-off reasons, booking actions, the call score and its signals |
 | `/workspace/call_archive/yyyy/mm/DATE.jsonl.gz` (`CALL_ARCHIVE_DIR`) | the same, for days the nightly archiver has already moved (read once, only if the day was not read from a journal) |
-| `/workspace/logs/pcm_app.log`, `main_app.log` (`DASHBOARD_LOG_FILES`) | what the recogniser heard in each turn, and a few markers (empty recognition, emergency, abuse, hand-off, timeouts) |
+| `/workspace/logs/pcm_app.log`, `main_app.log`, and the copies the deploy scripts keep at each restart in `/workspace/logs/archive/*/` (`DASHBOARD_LOG_FILES`, paths or glob patterns) | what the recogniser heard in each turn, and a few markers (empty recognition, emergency, abuse, hand-off, timeouts) |
 
 It keeps its own SQLite file (`DASHBOARD_DB`, default `/workspace/dashboard/dashboard.db`). The deploy script starts the agent with `> logfile`, which empties
 the log at every restart; copying the lines into this file as they appear is what keeps the transcripts after a restart.

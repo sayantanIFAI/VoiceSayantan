@@ -94,6 +94,8 @@ def read_new(
         st = os.stat(path)
     except OSError:
         return [], inode, offset, head
+    if offset and st.st_ino == inode and st.st_size == offset:
+        return [], inode, offset, head  # not grown since the last read
     with open(path, "rb") as f:
         first = f.read(64).hex()
         if st.st_ino != inode or st.st_size < offset or (head and first != head):

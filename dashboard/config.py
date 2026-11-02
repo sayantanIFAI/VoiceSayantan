@@ -11,7 +11,7 @@ class Config:
     # agent/call_journal.py writes one line per finished call here, and inflight/ for calls in progress
     journal_dir: str
     archive_dir: str  # tools/call_log_archiver.py moves a day's journal here at 01:00 clinic time
-    log_files: tuple[str, ...]  # the agent logs; only lines that belong to a call are read
+    log_files: tuple[str, ...]  # the agent logs (a path or a glob pattern); only lines that belong to a call are read
     db_path: str  # the dashboard's own store
     host: str
     port: int
@@ -23,7 +23,12 @@ class Config:
 
 
 def from_env() -> Config:
-    files = os.environ.get("DASHBOARD_LOG_FILES", "/workspace/logs/pcm_app.log,/workspace/logs/main_app.log")
+    # the live logs, and the copies the deploy scripts keep at every restart (each restart empties the live log)
+    default_logs = (
+        "/workspace/logs/pcm_app.log,/workspace/logs/main_app.log,"
+        "/workspace/logs/archive/*/pcm_app.log,/workspace/logs/archive/*/main_app.log"
+    )
+    files = os.environ.get("DASHBOARD_LOG_FILES", default_logs)
     return Config(
         journal_dir=os.environ.get("CALL_JOURNAL_DIR", "/workspace/call_journal"),
         archive_dir=os.environ.get("CALL_ARCHIVE_DIR", "/workspace/call_archive"),
