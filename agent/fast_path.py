@@ -348,6 +348,25 @@ class Catalogue:
             return True
         return any(same_given_name(prev, w) for w in words)
 
+    def other_surname_after_given(self, text: str, name: str | None) -> bool:
+        """True when the sentence says one of this doctor's GIVEN names and, right after it, a surname that is not his (another doctor's, or an everyday one from agent/common_surnames.py):
+        that is a full name nobody carries, not this doctor."""
+        from agent import common_surnames
+
+        given, words = self._doctor_given.get(name or ""), self._doctor_words.get(name or "")
+        if not given or not words:
+            return False
+        others = common_surnames.SURNAMES | {w for n, ws in self._doctor_words.items() if n != name for w in ws}
+        toks = [t.strip(".,?!।") for t in text.split()]
+        for a, b in zip(toks, toks[1:]):
+            if not a or not b or not any(same_given_name(a, g) for g in given):
+                continue
+            if any(same_given_name(b, w) for w in words):
+                continue  # his own surname (or another word of his name)
+            if b in common_surnames.SURNAMES or b in others and len(b) >= 3 and not any(same_given_name(b, g) for g in given):
+                return True
+        return False
+
     def doctor_info(self, doctor_name: str | None) -> dict | None:
         return self._doctor_info.get(doctor_name or "")
 
@@ -540,6 +559,9 @@ class FastPath:
         if not whole and (form or name or "") in _COMMON_WORD_ALIASES and not self._alias_beside_doctor_word(text, form or name):
             return None
         if not whole and not self.catalogue.given_name_ok(text, name, form):
+            return None
+        # Owner, 2026-11-03: "ডাক্তার দেবাশিস দেব বসছে কালকে" was answered for Dr. Debashis DAS: only the first name matched, and the surname said after it ("দেব") was never looked at.
+        if self.catalogue.other_surname_after_given(text, name):
             return None
         return name, form, score
 

@@ -97,6 +97,7 @@ from agent import abuse, action_gate, call_end, slot_grouping, topic_flow
 from agent import ws_guard  # limits and validation for what a client may send (review 2026-10-28)
 from agent import head_pain  # "mathar betha": a headache is asked about once (hurt or only a headache) before a department is named
 from agent import where_doctor_sits  # which floor / room a doctor sits in: the counter tells
+from agent import common_surnames, pace_request  # owner, 2026-11-03: everyday surnames no doctor has; "ধীরে বলুন" / "স্লো" / "থেমে থেমে বলুন"
 from agent import name_groups  # a doctor's name that is nobody's: the doctors with that surname / first name / the closest names
 from agent import doctor_facts  # "কিসের ডাক্তার", the fee and the menu of what can be asked about the doctor being talked about
 from agent import entity_confirmation as entity_text
@@ -1495,6 +1496,7 @@ async def _synthesize_one_clause(session: CallSession, clause: str, lang: str, f
     # KCD-149/157: the caller's policy rate, and slower still for a price,
     # phone number or reference (the two multiply).
     speed = effective_rate(session.policy, FIGURE_SPEECH_SPEED if contains_critical_figure(clause) else None, lang=lang)
+    speed = max(0.55, speed * getattr(session, "pace_factor", 1.0))  # owner, 2026-11-03: "স্লো বলুন" / "থেমে থেমে বলুন" (agent/pace_request.py); the TTS accepts 0.5 at the lowest
     prosody = {
         "pitch_scale": QUESTION_PITCH_SCALE if ("?" in clause or "？" in clause) else None,
         "energy_scale": APOLOGY_ENERGY_SCALE if count_apologies(clause, lang) > 0 else None,
@@ -4574,6 +4576,19 @@ def _find_in_last_reply(text: str, last: str, lang: str) -> tuple[str, str] | No
     return None
 
 
+async def _answer_pace_request(session: CallSession, text: str, lang: str) -> bool:
+    """The caller asks for a slower pace (agent/pace_request.py). Every sentence after this is spoken slower (each further request slows it more), and the last line is said again at the new pace."""
+    if not pace_request.asks_slower(text):
+        return False
+    last = getattr(session, "last_spoken", "") or ""
+    session.pace_factor = pace_request.next_factor(getattr(session, "pace_factor", 1.0))
+    logger.info("[%s] the caller asked for a slower pace: factor %.2f", session.call_id, session.pace_factor)
+    await _speak(session, pace_request.ack(lang, bool(last)), lang)
+    if last:
+        await _speak(session, last, getattr(session, "tts_output_language", None) or lang, repeat_ok=True)
+    return True
+
+
 async def _answer_bare_repeat(session: CallSession, text: str, lang: str) -> bool:
     """Owner, 2026-11-01: the caller can always say back a word, a group of words or a phrase of what the agent just said -- "ছয়শো টাকা" after "...ভিজিট 600 টাকা", "অরুণ কুমার" after the list of
     doctors. The algorithm looks for it in the last reply FIRST (the exact words, the digits of the reply as they are spoken, then by sound) and CONFIRMS it ("হ্যাঁ, ছয়শো টাকা"), instead of treating it as a
@@ -6617,6 +6632,8 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             return
         if _tools is not None and not _is_an_address_answer(session, text) and doctor_origin.asks_doctor_origin(text, has_context=booking_carryover.recent(session.last_doctor_enquiry, session.turn_count)) and await _answer_doctor_origin(session, text, lang):
             return
+        if await _unknown_full_name_turn(session, text, lang):
+            return  # owner, 2026-11-03: "ডাক্তার দেবাশিস দেব বসছে কালকে" -- a first name with a surname nobody has is told so BEFORE any day / hours answer (it was answered for Dr. Debashis Das)
         early = early_routing.classify(text, lang)
         if early == early_routing.SITTING_HOURS and not await _answer_sitting_hours(session, text, lang):
             early = None  # a lab test is named, or no doctor's hours can be told: the normal path
@@ -6797,6 +6814,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         session.lapsed_pending = (pending, session.turn_count)
 
     if not confirmed_entity:
+        if await _answer_pace_request(session, text, lang):
+            return  # owner, 2026-11-03: "স্লো বলুন" / "ধীরে বলুন" / "থেমে থেমে বলুন": slower from now on, and the last line again
         if await _answer_bare_repeat(session, text, lang):
             return  # the caller said back a phrase of our last reply: confirmed (owner, 2026-11-01)
         if await _answer_these_doctors_dept(session, text, lang):
@@ -9451,7 +9470,7 @@ async def _unknown_full_name_turn(session: CallSession, text: str, lang: str) ->
     if not infos:
         return False
     toks = [t.strip(".,?!।") for t in text.split() if t.strip(".,?!।")]
-    surnames = [x for i in infos for x in name_groups._own_names(i)[1]]  # noqa: SLF001
+    surnames = [x for i in infos for x in name_groups._own_names(i)[1]] + sorted(common_surnames.SURNAMES)  # noqa: SLF001  (owner, 2026-11-03: "দেবাশিস দেব" -- a surname nobody here carries)
     said = None
     for a, b in zip(toks, toks[1:]):
         if a in _NAME_FILLER or b in _NAME_FILLER or len(name_script.name_skeleton(a)) < 2:

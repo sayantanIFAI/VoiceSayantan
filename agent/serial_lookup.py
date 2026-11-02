@@ -66,6 +66,20 @@ def asks_own_serial(text: str, lang: str = "en") -> bool:
     return any(w in t for w in _FIRST_PERSON) and any(w in t for w in _SERIAL_ASK)
 
 
+# Owner, 2026-11-03 ("নাইন থ্রি থ্রি টু টু ওন ডবল ফাইভ ত্রিপলে থ্রি" was refused): the number is read with the SAME reader the booking uses (agent/booking_capture.read_digits), which knows English digit
+# words written in Bengali / Devanagari letters ("নাইন", "থ্রি", "ওন") and "ডবল" / "ত্রিপলে". spoken_codes._digit_run only knew the native words and plain English ones.
+def _read_digits(text: str) -> str:
+    from agent import booking_capture
+
+    return booking_capture.read_digits(text)[0]
+
+
+def _read_phone(text: str) -> str | None:
+    from agent import booking_capture
+
+    return booking_capture.phone_from_digits(booking_capture.read_digits(text)[0])
+
+
 # -------------------------------------------------------------------------------------------------------------------- the state machine
 def new_flow(turn: int) -> dict:
     """sourav, 2026-10-24: the state of one "find my serial" conversation. stage: "ask" (waiting for the number) or "confirm" (number read back, waiting for yes / no)."""
@@ -81,7 +95,7 @@ def advance(flow: dict, text: str, yes_no: str | None) -> tuple[str, str | None]
       "give_up"       MAX_TRIES misses: stop asking
     Flow ("ask"): read a mobile number from the sentence (digits may arrive over several turns, kept in flow["buf"]); a complete valid one moves to "confirm". Flow ("confirm"):
     yes -> look it up; no -> back to "ask" for a new number; a different complete number in the sentence replaces the one being confirmed; anything else -> repeat the question."""
-    spoken = spoken_codes.parse_phone(text)
+    spoken = _read_phone(text)
     if flow["stage"] == "confirm":
         if spoken and spoken != flow["phone"]:
             flow["phone"] = spoken  # "no, it is 98..." -- the corrected number is read back in its turn
@@ -96,10 +110,10 @@ def advance(flow: dict, text: str, yes_no: str | None) -> tuple[str, str | None]
         return ("give_up", None) if flow["tries"] >= MAX_TRIES else ("repeat", flow["phone"])
     # stage "ask"
     if spoken is None:
-        digits = spoken_codes._digit_run(text)
+        digits = _read_digits(text)
         if digits:
             flow["buf"] += digits
-            spoken = spoken_codes.parse_phone(flow["buf"])
+            spoken = _read_phone(flow["buf"])
             if spoken is None and len(flow["buf"]) >= 10:
                 flow["buf"] = ""  # ten or more digits that are not a mobile number: start over rather than keep adding
     if spoken:
