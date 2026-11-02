@@ -9453,7 +9453,14 @@ def _text_has_surname_of(text: str, info: dict) -> bool:
     return any(name_groups._same(t, s) for t in toks for s in name_groups._own_names(info)[1])  # noqa: SLF001
 
 
-_DOCTOR_CUE = re.compile(r"ডাক্তার|ডাঃ|ডক্টর|ডা\.|বসেন|বসে|বসছেন|আছেন|\bdr\b|\bdoctor\b|डॉक्टर|डाक्टर|बैठ", re.I)
+_DOCTOR_CUE = re.compile(r"ডাক্তার|ডাঃ|ডক্টর|ডা\.|বসেন|বসে|বসছেন|বসবে|বসবেন|বসছে|বসতেন|বসতে|আছেন|\bdr\b|\bdoctor\b|डॉक्टर|डाक्टर|बैठ", re.I)  # owner, 2026-11-03: "...ওই অমরকান্তি পাল বসবে" had no cue ("বসবে" was missing)
+
+
+def _awaiting_doctor_name(session: CallSession) -> bool:
+    """A "which doctor?" was asked a moment ago (for a weekday, an hours or a when-to-come question): the next sentence is a doctor's name even with no doctor word in it."""
+    t = session.turn_count
+    pd = session.pending_day
+    return (pd is not None and t - pd[0] <= 2) or any(x is not None and t - x <= 2 for x in (session.pending_hours, session.pending_when))
 
 
 def _strip_genitive(tok: str) -> str:
@@ -9467,7 +9474,7 @@ async def _unknown_full_name_turn(session: CallSession, text: str, lang: str) ->
     """Owner, 2026-10-31 ("না না অভিজিৎ নন্দীর কথা বলছি বাচ্চাদের ডাক্তার" was answered "which problem?"): a first name and a surname that no doctor of the clinic carries together, said about a doctor, are answered
     "'অভিজিৎ নন্দী' নামে কেউ বসেন না" and then the doctors who really share the first name (or, with no such first name, the surname), each with his department (agent/name_groups.py). Needs a doctor cue in
     the sentence, so an ordinary pair of words is never taken for a name."""
-    if _fast_path is None or session.booking is not None or len(text.split()) > 14 or _DOCTOR_CUE.search(text) is None:
+    if _fast_path is None or session.booking is not None or len(text.split()) > 14 or (_DOCTOR_CUE.search(text) is None and not _awaiting_doctor_name(session)):
         return False
     infos = list({id(i): i for i in _fast_path.catalogue._doctor_info.values()}.values())  # noqa: SLF001
     if not infos:
@@ -9475,12 +9482,17 @@ async def _unknown_full_name_turn(session: CallSession, text: str, lang: str) ->
     toks = [t.strip(".,?!।") for t in text.split() if t.strip(".,?!।")]
     surnames = [x for i in infos for x in name_groups._own_names(i)[1]] + sorted(common_surnames.SURNAMES)  # noqa: SLF001  (owner, 2026-11-03: "দেবাশিস দেব" -- a surname nobody here carries)
     said = None
-    for a, b in zip(toks, toks[1:]):
+    for j in range(1, len(toks)):
+        a, b = toks[j - 1], toks[j]
         if a in _NAME_FILLER or b in _NAME_FILLER or len(name_script.name_skeleton(a)) < 2:
             continue
         for cand in (_strip_genitive(b), b):  # the name without the "of" ending is what is said back
             if any(name_groups._same(cand, s_) for s_ in surnames):  # noqa: SLF001
-                said = f"{a} {cand}"
+                # Owner, 2026-11-03 ("অমর কান্তি পাল": the recogniser splits a first name in two): the name-like words right before the surname, up to two, are the first name
+                first = [a]
+                if j >= 2 and toks[j - 2] not in _NAME_FILLER and len(name_script.name_skeleton(toks[j - 2])) >= 2 and not any(name_groups._same(toks[j - 2], s_) for s_ in surnames):  # noqa: SLF001
+                    first.insert(0, toks[j - 2])
+                said = f"{' '.join(first)} {cand}"
                 break
         if said:
             break
@@ -9814,7 +9826,7 @@ def _names_offered_doctor(session: CallSession, text: str) -> bool:
 
 
 _NAME_FILLER = frozenset(
-    "ডাঃ ডা ডাক্তার ডক্টর ডাক্তর ডঃ dr doctor আছে আছেন আছো আছি বসেন বসবেন বসবে বসছে বসছেন বসে বুঝলেন বুঝবে বুঝবেন বুজবে বলুন বলছি বলছিলাম বলছেন বলেন বলো আজ আজকে কাল কালকে পরশু আগামীকাল হ্যাঁ হ্যা জি ও ওই তো কি কী কবে কখন কেউ কোনো কোন একটা এটা সেটা তাহলে আচ্ছা প্লিজ হ্যালো আর এখন এখানে ওখানে সকালে বিকালে বিকেলে রাতে দুপুরে সন্ধ্যায় আমি আমার আপনি".split()
+    "ডাঃ ডা ডাক্তার ডক্টর ডাক্তর ডঃ dr doctor আছে আছেন আছো আছি বসেন বসবেন বসবে বসছে বসছেন বসে বুঝলেন বুঝবে বুঝবেন বুজবে বলুন বলছি বলছিলাম বলছেন বলেন বলো আজ আজকে কাল কালকে পরশু আগামীকাল হ্যাঁ হ্যা জি ও ওই তো কি কী কবে কখন কেউ কোনো কোন একটা এটা সেটা তাহলে আচ্ছা প্লিজ হ্যালো আর এখন এখানে ওখানে সকালে বিকালে বিকেলে রাতে দুপুরে সন্ধ্যায় আমি আমার আপনি সন্ধ্যাবেলা সন্ধ্যাবেলায় সন্ধেবেলা সকালবেলা বিকেলবেলা দুপুরবেলা বললাম বলেছি বলেছিলাম বলছিলাম বলি".split()
 )
 
 
