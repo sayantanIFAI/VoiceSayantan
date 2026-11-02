@@ -46,7 +46,7 @@ tr.call{cursor:pointer}tr.call:hover td,tr.sel td{background:var(--soft)}
 <body>
 <main>
 <div class="bar-top">
-  <h1>Call dashboard</h1>
+  <h1>Call dashboard <a href="../" style="font-size:13px;font-weight:400;margin-left:10px">&larr; voice agent</a></h1>
   <div class="controls">
     <label>Period <select id="days"><option value="1">Today</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option></select></label>
     <label>Language <select id="lang"><option value="">All</option><option value="bn">Bengali</option><option value="hi">Hindi</option><option value="en">English</option></select></label>
@@ -177,7 +177,7 @@ function evText(e){
     default:return e.kind}}
 function openCall(day,id){
   var host=$("detail");clear(host);host.appendChild(el("div","empty","Loading ..."));
-  get("/api/call?day="+encodeURIComponent(day)+"&id="+encodeURIComponent(id)).then(function(d){
+  get("api/call?day="+encodeURIComponent(day)+"&id="+encodeURIComponent(id)).then(function(d){
     clear(host);var s=d.summary,l=d.labels;
     var head=el("div");head.style.marginTop="12px";
     head.appendChild(el("b","","Call "+d.call_id+" on "+d.day));
@@ -199,14 +199,14 @@ function openCall(day,id){
 
 function drawFilters(){var f=$("filters");clear(f);FILTERS.forEach(function(x){var b=el("button",state.tag===x[0]?"on":"",x[1]);b.onclick=function(){state.tag=x[0];drawFilters();loadCalls()};f.appendChild(b)})}
 function qs(){return "days="+state.days+"&lang="+encodeURIComponent(state.lang)}
-function loadCalls(){get("/api/calls?"+qs()+"&tag="+encodeURIComponent(state.tag)+"&limit=200").then(function(r){drawCalls(r.calls)}).catch(function(){})}
+function loadCalls(){get("api/calls?"+qs()+"&tag="+encodeURIComponent(state.tag)+"&limit=200").then(function(r){drawCalls(r.calls)}).catch(function(){})}
 function load(){
-  get("/api/summary?"+qs()).then(drawSummary).catch(function(){$("kpis").textContent="Could not load."});
+  get("api/summary?"+qs()).then(drawSummary).catch(function(){$("kpis").textContent="Could not load."});
   loadCalls();
-  get("/api/health").then(function(h){$("stamp").textContent=h.last_ingest?"read "+h.last_ingest.replace("T"," ").replace("+00:00"," UTC"):"nothing read yet"}).catch(function(){})}
+  get("api/health").then(function(h){$("stamp").textContent=h.last_ingest?"read "+h.last_ingest.replace("T"," ").replace("+00:00"," UTC"):"nothing read yet"}).catch(function(){})}
 $("days").onchange=function(){state.days=this.value;load()};
 $("lang").onchange=function(){state.lang=this.value;load()};
-drawFilters();load();setInterval(function(){get("/api/summary?"+qs()).then(drawSummary).catch(function(){});loadCalls()},15000);
+drawFilters();load();setInterval(function(){get("api/summary?"+qs()).then(drawSummary).catch(function(){});loadCalls()},15000);
 </script>
 </body>
 </html>

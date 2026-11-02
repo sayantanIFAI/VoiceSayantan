@@ -16,9 +16,16 @@
     #warning { display: none; max-width: 600px; margin: 20px auto; background: #fff3cd; color: #664d03;
                padding: 12px; border-radius: 8px; font-size: 14px; }
     #note { max-width: 600px; margin: 14px auto 0; font-size: 12px; color: #6b7280; line-height: 1.5; }
+    .dashlink { position: fixed; top: 12px; right: 12px; width: 40px; height: 40px; border-radius: 50%; background: #ffffff;
+                border: 1px solid #d5dbe1; display: flex; align-items: center; justify-content: center; text-decoration: none; }
+    .dashlink:hover { background: #eef3f8; border-color: #9aa4ad; }
+    .dashlink svg { width: 22px; height: 22px; stroke: #334155; fill: none; stroke-width: 2; stroke-linecap: round; }
   </style>
 </head>
 <body>
+  <a class="dashlink" href="dashboard/" target="_blank" rel="noopener" title="Call dashboard" aria-label="Open the call dashboard">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V11M12 20V4M19 20v-6"/></svg>
+  </a>
   <h2>কলকাতা কেয়ার ডায়াগনস্টিকস (Kolkata Care AI)</h2>
   <div id="warning"></div>
   <button id="micBtn">কল শুরু করুন (Start Call)</button>

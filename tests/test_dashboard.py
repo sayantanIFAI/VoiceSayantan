@@ -336,3 +336,35 @@ def test_it_will_not_listen_on_a_public_address_without_a_password(tmp_path):
 def test_the_page_sets_text_only_through_textcontent():
     page = open(os.path.join(REPO_ROOT, "dashboard", "static", "index.html"), encoding="utf-8").read()
     assert "innerHTML" not in page and "document.write" not in page and "eval(" not in page
+
+
+# ------------------------------------------------------------------ the integration with the live page and the pod
+
+
+def _read(*parts):
+    return open(os.path.join(REPO_ROOT, *parts), encoding="utf-8").read()
+
+
+def test_the_dashboard_page_asks_for_its_data_with_relative_urls():
+    """Behind the gateway the page is at /dashboard/, so "/api/..." would reach the voice agent's own API instead of the dashboard."""
+    page = _read("dashboard", "static", "index.html")
+    assert '"/api/' not in page and '"api/summary' in page and '"api/call' in page
+
+
+@pytest.mark.parametrize("path", [("static", "pcm", "index.html"), ("static", "index.html")])
+def test_both_live_pages_link_to_the_dashboard(path):
+    page = _read(*path)
+    assert 'href="dashboard/"' in page and "Call dashboard" in page
+
+
+def test_the_gateway_routes_the_dashboard_behind_the_login_and_the_pod_starts_it():
+    import re
+
+    conf = _read("deploy", "gateway", "nginx.conf")
+    server = conf[conf.index("server {") :]
+    assert "proxy_pass http://127.0.0.1:8890/;" in server
+    block = server[server.index("location /dashboard/") : server.index("location / {")]
+    assert "auth_basic off" not in block  # only /twilio/ is open; the dashboard shows what callers said
+    start = _read("deploy", "start_all.sh")
+    assert re.search(r"start\s+dashboard\s+8890\s+/workspace/logs/dashboard\.log", start)
+    assert "-m dashboard" in start

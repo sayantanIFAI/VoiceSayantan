@@ -35,7 +35,23 @@ python3 -m dashboard            # serve on http://127.0.0.1:8890/ and keep readi
 python3 -m dashboard --demo     # made-up calls from a temporary folder, to see the screen before pointing it at the pod
 ```
 
-On the pod, reach it through an SSH tunnel to port 8890. To serve it on another address, set a user name and password; it refuses to listen on any
+## On the pod
+
+The voice page (`static/pcm/index.html`, and `static/index.html`) has a small bar-chart icon at the top right that opens `/dashboard/` on the same address.
+The gateway (`deploy/gateway/nginx.conf`) passes `/dashboard/` to the dashboard on `127.0.0.1:8890`, **behind the same login as the voice page**, and
+`deploy/start_all.sh` starts the dashboard with the other services. To put an update on a running pod without restarting the voice agent:
+
+```bash
+cd /workspace/kolkata-care-voice-agent && git pull
+cp deploy/gateway/nginx.conf /workspace/gateway/nginx.conf
+bash /workspace/gateway/gateway.sh start        # reloads the running gateway (nginx -t first)
+bash deploy/start_all.sh                        # starts only what is not already up: the dashboard
+```
+
+The static pages are read from disk, so the icon appears on the next page load. Anyone who can sign in to the voice page can open the dashboard and read
+transcripts; give the dashboard its own login (a separate nginx password file for `/dashboard/`) if that is not what you want.
+
+Elsewhere, reach it through an SSH tunnel to port 8890. To serve it on another address, set a user name and password; it refuses to listen on any
 non-loopback address without them:
 
 ```bash

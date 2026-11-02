@@ -116,6 +116,13 @@ cd /workspace/kolkata-care-voice-agent
 export OMP_NUM_THREADS=${INDIC_ASR_THREADS:-4} MKL_NUM_THREADS=${INDIC_ASR_THREADS:-4}
 exec /workspace/venv/bin/python3 -m uvicorn indic_asr_server:app --host ${INTERNAL_BIND_HOST:-127.0.0.1} --port 8004 --workers ${INDIC_ASR_WORKERS:-4}
 EOF
+# The call dashboard (dashboard/README.md): read-only, standard library only, listens on 127.0.0.1:8890 and is reached through the gateway at /dashboard/.
+cat > /workspace/bin/_run_dashboard.sh <<'EOF'
+#!/bin/bash
+source /workspace/kolkata-care-voice-agent/deploy/env.sh
+cd /workspace/kolkata-care-voice-agent
+exec /workspace/venv/bin/python3 -m dashboard
+EOF
 chmod +x /workspace/bin/_run_*.sh
 
 start tts         8002 /workspace/logs/tts_server.log   /workspace/bin/_run_tts.sh
@@ -141,6 +148,7 @@ start voice-agent 8100 /workspace/logs/main_app.log     /workspace/bin/_run_main
 fi
 start voice-pcm   8101 /workspace/logs/pcm_app.log      /workspace/bin/_run_pcm.sh
 start english-asr 8003 /workspace/logs/english_asr.log  /workspace/bin/_run_english_asr.sh
+start dashboard   8890 /workspace/logs/dashboard.log    /workspace/bin/_run_dashboard.sh
 
 echo
 echo "Models load for 1-3 minutes. Watch readiness with:"
