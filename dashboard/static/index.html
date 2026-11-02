@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Call dashboard</title>
+<style>
+:root{--bg:#fafaf8;--card:#fff;--soft:#f1f0eb;--text:#1d1d1b;--muted:#6b6a64;--line:#e2e0d8;--accent:#185fa5;--accent-bg:#e6f1fb;--ok:#3b6d11;--ok-bg:#eaf3de;--warn:#854f0b;--warn-bg:#faeeda;--bad:#a32d2d;--bad-bg:#fceBEB;--bar:#378add}
+@media (prefers-color-scheme:dark){:root{--bg:#161614;--card:#1f1f1c;--soft:#2a2a26;--text:#f0efec;--muted:#a3a198;--line:#3a3a35;--accent:#85b7eb;--accent-bg:#0c447c;--ok:#c0dd97;--ok-bg:#27500a;--warn:#fac775;--warn-bg:#633806;--bad:#f7c1c1;--bad-bg:#791f1f;--bar:#378add}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1040px;margin:0 auto;padding:16px}
+h1{font-size:20px;font-weight:500;margin:0}
+h2{font-size:13px;font-weight:500;color:var(--muted);margin:0 0 10px}
+.bar-top{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:14px}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;color:var(--muted);font-size:13px}
+select,button{font:inherit;color:var(--text);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:5px 10px}
+button{cursor:pointer}button:hover{border-color:var(--muted)}button.on{background:var(--accent-bg);border-color:var(--accent);color:var(--accent)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:14px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.kpi b{display:block;font-size:24px;font-weight:500}.kpi span{font-size:12px;color:var(--muted)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:14px}
+.seg{display:flex;height:20px;border-radius:4px;overflow:hidden;gap:2px}.seg i{display:block;height:100%}
+.legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;font-size:12px;color:var(--muted)}
+.legend s{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;text-decoration:none}
+.row{display:grid;grid-template-columns:1fr 90px 44px;gap:8px;align-items:center;margin:5px 0;font-size:13px}
+.row .b{height:10px;border-radius:3px;background:var(--bar)}
+.row .n{text-align:right}
+.note{font-size:12px;color:var(--muted);margin-top:8px}
+.pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:8px;margin:0 4px 2px 0;white-space:nowrap}
+.p-ok{background:var(--ok-bg);color:var(--ok)}.p-warn{background:var(--warn-bg);color:var(--warn)}.p-bad{background:var(--bad-bg);color:var(--bad)}.p-in{background:var(--accent-bg);color:var(--accent)}.p-gy{background:var(--soft);color:var(--muted)}
+table{width:100%;border-collapse:collapse}
+th{font-size:12px;font-weight:400;color:var(--muted);text-align:left;padding:4px 6px;border-bottom:1px solid var(--line)}
+td{padding:6px;border-bottom:1px solid var(--line);vertical-align:top}
+tr.call{cursor:pointer}tr.call:hover td,tr.sel td{background:var(--soft)}
+.filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-top:12px}
+.tl{list-style:none;margin:0;padding:0}.tl li{padding:6px 0;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:flex-start}
+.tl .t{color:var(--muted);font-size:12px;min-width:56px}
+.agree{display:inline-block;width:46px;height:6px;background:var(--soft);border-radius:3px;vertical-align:middle;margin-right:4px;overflow:hidden}.agree i{display:block;height:100%}
+.said{font-size:15px}
+.empty{color:var(--muted);padding:14px 0}
+</style>
+</head>
+<body>
+<main>
+<div class="bar-top">
+  <h1>Call dashboard</h1>
+  <div class="controls">
+    <label>Period <select id="days"><option value="1">Today</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option></select></label>
+    <label>Language <select id="lang"><option value="">All</option><option value="bn">Bengali</option><option value="hi">Hindi</option><option value="en">English</option></select></label>
+    <span id="stamp"></span>
+  </div>
+</div>
+
+<div class="kpis" id="kpis"></div>
+
+<div class="card"><h2>How calls ended</h2><div class="seg" id="ended"></div><div class="legend" id="endedLegend"></div></div>
+
+<div class="grid">
+  <div class="card"><h2>Dropped in the middle</h2><div id="dropped"></div></div>
+  <div class="card"><h2>Transferred to a person</h2><div id="transferred"></div></div>
+  <div class="card"><h2>Clarifying questions (the AI asked the caller to repeat)</h2><div id="clar"></div></div>
+  <div class="card"><h2>Bookings</h2><div id="booking"></div></div>
+  <div class="card"><h2>The caller disagreed or something went wrong</h2><div id="wrong"></div></div>
+</div>
+
+<div class="card" id="callsCard">
+  <h2>Calls</h2>
+  <div class="filters" id="filters"></div>
+  <div id="calls"></div>
+  <div id="detail"></div>
+</div>
+
+<div class="card"><h2>What this screen cannot show</h2>
+  <ul class="note" style="margin:0;padding-left:18px">
+    <li>The AI's own words. The agent does not write them to any file, so a call shows what the caller said and what the agent recorded, not the replies.</li>
+    <li>"Did you mean ...?" and "which one, A or B?" questions. They are not recorded, so clarifications here are the re-asks only.</li>
+    <li>Whether the AI offered a booking. It is not recorded, so "booking after an enquiry" counts calls where an enquiry came first and a booking followed.</li>
+    <li>A direct "that is wrong" from the caller. There is no detector; the panel counts visible disagreement (a correction at the read-back, a complaint, a request for a person).</li>
+    <li>How wrong the speech recognition was. That needs a human transcript (tools/asr_eval.py).</li>
+  </ul>
+</div>
+</main>
+<script>
+var LABEL={
+ cause:{left_during_booking:"Left during a booking",silence:"Went silent",left_after_reask:"Left after being asked to repeat",hung_up_before_first_turn:"Hung up before speaking",line_or_process_lost:"Line or process lost",left_other:"Left (other)"},
+ group:{caller_asked:"The caller asked",policy:"A rule or safety policy",system:"The system could not cope"},
+ reason:{caller_requested:"Asked for a person",complaint:"Complaint",lost_and_found:"Lost property",history_requested_staff:"Asked for staff (own history)",clinical_interpretation:"Asked what a result means",verification_failed:"Identity check failed",verification_unclear:"Identity check unclear",unverified_booking_write:"Booking before identity check",unlisted_scan:"Scan not on the list",report_status_on_visit_day:"Report status on the visit day",emergency:"Emergency",audio_overrun:"Audio could not keep up",history_record_not_found:"History record not found",history_phone_unclear:"History: phone unclear",history_patient_unclear:"History: patient unclear"},
+ reask:{noisy:"Noisy line",too_quiet:"Too quiet",crosstalk:"Other voices",unvoiced_mumble:"Mumbled",empty:"Nothing heard",unclear:"Not understood",language_ambiguous:"Language unclear"},
+ wrong:{correction_at_readback:"Corrected a value at the read-back",asked_for_a_person:"Asked for a person",complaint:"Complained",language_put_right:"Had to put the language right",system_error_heard:"Heard a system error"},
+ cat:{answered:"Question answered",booked:"Booking confirmed",changed:"Booking changed",ended:"Ended, nothing done",transferred:"Transferred",dropped:"Dropped",quiet:"Abusive, off-topic, wrong number",live:"In progress"},
+ outcome:{not_booked:"Not confirmed"}
+};
+var CATCOL={answered:"#378add",booked:"#639922",changed:"#1d9e75",ended:"#888780",transferred:"#ba7517",dropped:"#e24b4a",quiet:"#7f77dd",live:"#85b7eb"};
+var FILTERS=[["attention","Needs attention"],["","All calls"],["dropped","Dropped"],["transferred","Transferred"],["clarified","Re-asked"],["said_wrong","Disagreed"],["booking","Booking talk"],["booked","Booked"]];
+var state={days:"1",lang:"",tag:"attention",sel:null};
+function $(id){return document.getElementById(id)}
+function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
+function lab(map,k){
+  if(map==="reason"&&String(k).indexOf("unintelligible")===0)return "Could not make out the caller ("+lab("reask",String(k).split(":")[1]||"unclear").toLowerCase()+")";
+  return (LABEL[map]&&LABEL[map][k])||String(k).replace(/_/g," ")}
+function clear(n){while(n.firstChild)n.removeChild(n.firstChild)}
+function pct(a,b){return b?Math.round(a/b*100):0}
+function get(url){return fetch(url,{cache:"no-store"}).then(function(r){if(!r.ok)throw new Error(r.status);return r.json()})}
+function bars(host,obj,labelMap,total,color){
+  clear(host);var keys=Object.keys(obj).sort(function(a,b){return obj[b]-obj[a]});
+  if(!keys.length){host.appendChild(el("div","empty","None in this period."));return}
+  var mx=Math.max.apply(null,keys.map(function(k){return obj[k]}));
+  keys.forEach(function(k){var r=el("div","row");r.appendChild(el("span","",lab(labelMap,k)));var w=el("span");var b=el("div","b");b.style.width=Math.max(4,Math.round(obj[k]/mx*100))+"%";if(color)b.style.background=color;w.appendChild(b);r.appendChild(w);r.appendChild(el("span","n",String(obj[k])));host.appendChild(r)})}
+function kpi(host,value,label){var d=el("div","kpi");d.appendChild(el("b","",value));d.appendChild(el("span","",label));host.appendChild(d)}
+function line(host,text,cls){host.appendChild(el("div",cls||"note",text))}
+
+function drawSummary(s){
+  var k=$("kpis");clear(k);var n=s.calls,c=s.categories;
+  kpi(k,String(n),"calls ("+s.from+(s.from===s.to?"":" to "+s.to)+")");
+  kpi(k,pct(c.dropped,n)+"%","dropped in the middle ("+c.dropped+")");
+  kpi(k,pct(c.transferred,n)+"%","transferred to a person ("+c.transferred+")");
+  kpi(k,String(s.clarifications.per_call),"re-asks per call ("+s.clarifications.calls+" calls had one)");
+  kpi(k,String(s.booking.confirmed),"bookings confirmed, of "+s.booking.calls_with_booking_intent+" booking calls");
+  kpi(k,pct(s.wrong.calls,n)+"%","calls where the caller disagreed ("+s.wrong.calls+")");
+  var seg=$("ended"),lg=$("endedLegend");clear(seg);clear(lg);
+  ["answered","booked","changed","ended","transferred","dropped","quiet","live"].forEach(function(key){
+    var v=c[key]||0;if(!v)return;var i=el("i");i.style.width=(v/Math.max(n,1)*100)+"%";i.style.background=CATCOL[key];i.title=lab("cat",key)+": "+v;seg.appendChild(i);
+    var sp=el("span");var sw=el("s");sw.style.background=CATCOL[key];sp.appendChild(sw);sp.appendChild(document.createTextNode(lab("cat",key)+" "+v+" ("+pct(v,n)+"%)"));lg.appendChild(sp)});
+  if(!n)seg.appendChild(el("div","empty","No calls in this period."));
+
+  var d=$("dropped");clear(d);line(d,s.dropped.total+" calls ended before the caller got what they came for.","");bars(d,s.dropped.causes,"cause",s.dropped.total,"var(--bad)");
+  var t=$("transferred");clear(t);var g=s.transferred.groups;
+  var chips=el("div");Object.keys(g).forEach(function(k){chips.appendChild(el("span","pill "+(k==="system"?"p-bad":k==="policy"?"p-warn":"p-in"),lab("group",k)+" "+g[k]))});t.appendChild(chips);
+  var byr={};Object.keys(s.transferred.reasons).forEach(function(r){byr[r]=s.transferred.reasons[r].count});bars(t,byr,"reason",s.transferred.total,"var(--warn)");
+  var cl=$("clar");clear(cl);bars(cl,s.clarifications.by_reason,"reask",s.clarifications.total);
+  line(cl,s.clarifications.calls_that_still_ended_dropped_or_transferred+" of the "+s.clarifications.calls+" calls with a re-ask still ended dropped or transferred.");
+  var b=$("booking"),bk=s.booking;clear(b);
+  var rows={};rows["Calls with a booking intent"]=bk.calls_with_booking_intent;rows["Caller asked for it from the start"]=bk.requested;rows["An enquiry came first, then a booking"]=bk.after_enquiry;rows["Booking confirmed"]=bk.confirmed;rows["  of which asked from the start"]=bk.confirmed_requested;rows["  of which after an enquiry"]=bk.confirmed_after_enquiry;rows["Existing booking changed or cancelled"]=bk.changes;
+  var mx=Math.max(1,bk.calls_with_booking_intent);Object.keys(rows).forEach(function(k){var r=el("div","row");r.appendChild(el("span","",k));var w=el("span");var bb=el("div","b");bb.style.width=Math.max(3,Math.round(rows[k]/mx*100))+"%";w.appendChild(bb);r.appendChild(w);r.appendChild(el("span","n",String(rows[k])));b.appendChild(r)});
+  var nb=bk.not_confirmed_by_outcome,parts=Object.keys(nb).map(function(k){return nb[k]+" "+lab("cat",k).toLowerCase()}).join(", ");
+  line(b,"Booking calls not confirmed: "+(parts||"none")+".");
+  line(b,"The agent's own booking offers are not recorded, so \"after an enquiry\" is the nearest count to \"booking induced\".");
+  var w=$("wrong");clear(w);bars(w,s.wrong.by_signal,"wrong",s.wrong.calls,"var(--bad)");
+  line(w,s.wrong.unhappy_calls+" calls ended in the unhappy bands of the call score"+(s.score.mean!==null?"; mean score "+s.score.mean:"")+".");
+}
+
+function chip(tag){var m={dropped:["p-bad","Dropped"],transferred:["p-warn","Transferred"],booked:["p-ok","Booked"],changed:["p-ok","Changed"],answered:["p-in","Answered"],ended:["p-gy","Ended"],quiet:["p-gy","Abusive / off-topic"],live:["p-in","Live"],clarified:["p-in","Re-asked"],said_wrong:["p-bad","Disagreed"],unhappy:["p-bad","Unhappy"]};return m[tag]}
+function drawCalls(list){
+  var host=$("calls");clear(host);
+  if(!list.length){host.appendChild(el("div","empty","No calls match."));return}
+  var t=el("table"),h=el("tr");["Day","Call","Lang","What happened","Why","Score"].forEach(function(x){h.appendChild(el("th","",x))});t.appendChild(h);
+  list.forEach(function(c){
+    var r=el("tr","call");r.appendChild(el("td","",c.day));r.appendChild(el("td","",c.call_id));r.appendChild(el("td","",c.lang||"-"));
+    var td=el("td");c.tags.forEach(function(g){var ch=chip(g);if(ch)td.appendChild(el("span","pill "+ch[0],ch[1]))});r.appendChild(td);
+    var why=c.category==="transferred"?lab("reason",c.transfer_reason):c.category==="dropped"?lab("cause",c.drop_cause):"";r.appendChild(el("td","",why));
+    r.appendChild(el("td","",c.score===null||c.score===undefined?"-":String(c.score)));
+    r.onclick=function(){state.sel=[c.day,c.call_id];Array.prototype.forEach.call(t.querySelectorAll("tr.call"),function(x){x.className="call"});r.className="call sel";openCall(c.day,c.call_id)};
+    t.appendChild(r)});
+  host.appendChild(t)}
+
+function agreeBar(a){var w=el("span","agree"),i=el("i");i.style.width=Math.round(a*100)+"%";i.style.background=a<0.5?"var(--bad)":a<0.8?"var(--warn)":"var(--ok)";w.appendChild(i);return w}
+function logRow(ev){
+  var li=el("li");li.appendChild(el("span","t",(ev.time||"")));var body=el("div");
+  if(ev.kind==="heard"){var s=el("div","said",ev.text===undefined?"(text not kept)":ev.text);body.appendChild(s);var m=el("div","note");m.appendChild(agreeBar(ev.agreement));m.appendChild(document.createTextNode("heard as "+ev.lang+", "+ev.decoder+", agreement "+ev.agreement.toFixed(2)));if(ev.agreement<0.5){m.appendChild(document.createTextNode(" "));m.appendChild(el("span","pill p-bad","low agreement"))}body.appendChild(m)}
+  else{var t={start:"Call started",end:"Call ended",empty:"Nothing was recognised",emergency:"Possible emergency heard",abuse:"Abusive turn "+(ev.value||""),handoff:"Handed to a person: "+lab("reason",ev.value),audio_overrun:"Audio could not keep up",idle_timeout:"Idle timeout, call closed",silence:"Caller was silent",interrupted:"Caller talked over a reply",lang_mismatch:"A reply came out in the wrong language",unspeakable:"A reply could not be spoken",score:"Call score "+ev.score+" ("+ev.band+")"}[ev.kind]||ev.kind;
+    var bad=["empty","emergency","abuse","handoff","audio_overrun","idle_timeout","lang_mismatch","unspeakable"].indexOf(ev.kind)>=0;body.appendChild(el("span","pill "+(bad?"p-warn":"p-gy"),t))}
+  li.appendChild(body);return li}
+function evText(e){
+  switch(e.kind){
+    case "start":return "Call started ("+(e.channel||"voice")+")";
+    case "language":return "Language heard: "+e.language;
+    case "intent":return "Understood as: "+String(e.intent).replace(/_/g," ");
+    case "reask":return e.action==="handoff"?"Gave up asking ("+lab("reask",e.reason)+") and handed over":"Asked to repeat: "+lab("reask",e.reason);
+    case "action":return "Done: "+String(e.name).replace(/_/g," ")+(e.ref?" ("+e.ref+")":"");
+    case "confirmed":return "Caller confirmed: "+(e.fields||[]).join(", ")+" (values not shown)";
+    case "escalation":return "Handed to a person: "+lab("reason",e.reason);
+    case "satisfaction":return "Call score "+(e.score===null?"not scored":e.score)+" ("+(e.band||"")+")";
+    case "end":return "Call ended: "+e.outcome;
+    default:return e.kind}}
+function openCall(day,id){
+  var host=$("detail");clear(host);host.appendChild(el("div","empty","Loading ..."));
+  get("/api/call?day="+encodeURIComponent(day)+"&id="+encodeURIComponent(id)).then(function(d){
+    clear(host);var s=d.summary,l=d.labels;
+    var head=el("div");head.style.marginTop="12px";
+    head.appendChild(el("b","","Call "+d.call_id+" on "+d.day));
+    var meta=el("div","note",[s.channel||"voice",(s.languages||[]).join(" > ")||"language unknown",lab("cat",l.category)+(l.transfer_reason?" ("+lab("reason",l.transfer_reason)+")":"")+(l.drop_cause?" ("+lab("cause",l.drop_cause)+")":""),s.score!==null?"score "+s.score+" ("+s.band+")":"not scored",s.last4?"caller ends ...."+s.last4:""].filter(Boolean).join(" · "));
+    head.appendChild(meta);
+    (l.wrong_signals||[]).forEach(function(w){head.appendChild(el("span","pill p-bad",lab("wrong",w)))});
+    host.appendChild(head);
+    var cols=el("div","cols"),a=el("div"),b=el("div");
+    a.appendChild(el("h2","","What the caller said (from the agent log)"));
+    var ul=el("ul","tl");
+    if(!d.log.length)ul.appendChild(el("li","empty",d.log_day===""?"No log lines were found for this call (the log may have been cleared by a restart, or the transcripts are older than the retention period).":""));
+    d.log.forEach(function(ev){if(ev.kind==="start"||ev.kind==="end"||ev.kind==="score")return;ul.appendChild(logRow(ev))});
+    a.appendChild(ul);
+    b.appendChild(el("h2","","What the agent recorded (from the call journal)"));
+    var ul2=el("ul","tl");(s.timeline||[]).forEach(function(e){var li=el("li");li.appendChild(el("span","t","#"+e.seq));li.appendChild(el("div","",evText(e)));ul2.appendChild(li)});b.appendChild(ul2);
+    cols.appendChild(a);cols.appendChild(b);host.appendChild(cols);
+    host.appendChild(el("div","note","The AI's replies are not in the log, so they are not shown. The two lists have different clocks and are not interleaved."));
+  }).catch(function(){clear(host);host.appendChild(el("div","empty","Could not load this call."))})}
+
+function drawFilters(){var f=$("filters");clear(f);FILTERS.forEach(function(x){var b=el("button",state.tag===x[0]?"on":"",x[1]);b.onclick=function(){state.tag=x[0];drawFilters();loadCalls()};f.appendChild(b)})}
+function qs(){return "days="+state.days+"&lang="+encodeURIComponent(state.lang)}
+function loadCalls(){get("/api/calls?"+qs()+"&tag="+encodeURIComponent(state.tag)+"&limit=200").then(function(r){drawCalls(r.calls)}).catch(function(){})}
+function load(){
+  get("/api/summary?"+qs()).then(drawSummary).catch(function(){$("kpis").textContent="Could not load."});
+  loadCalls();
+  get("/api/health").then(function(h){$("stamp").textContent=h.last_ingest?"read "+h.last_ingest.replace("T"," ").replace("+00:00"," UTC"):"nothing read yet"}).catch(function(){})}
+$("days").onchange=function(){state.days=this.value;load()};
+$("lang").onchange=function(){state.lang=this.value;load()};
+drawFilters();load();setInterval(function(){get("/api/summary?"+qs()).then(drawSummary).catch(function(){});loadCalls()},15000);
+</script>
+</body>
+</html>
