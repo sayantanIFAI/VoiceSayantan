@@ -4547,6 +4547,10 @@ async def _answer_bare_repeat(session: CallSession, text: str, lang: str) -> boo
         session.confirm_lead = (f"{_YES_LEAD[lang]} {words}।", session.turn_count)  # the answer to our question: confirmed, then the pick / booking carries on
         logger.info("[%s] the caller said back %r from the last reply: confirmed in front of the answer", session.call_id, words)
         return False
+    if last.rstrip().endswith(("?", "\uff1f")):
+        # Owner, 2026-11-02 ("কার কথা বলছেন, অমিত কর নাকি অমিতাভ ভদ্র?" -> "অমিত কর" was echoed back instead of taken as the choice): when the last reply ASKED something, a phrase
+        # of it said back is the ANSWER, never an echo. Only a statement ("...ভিজিট 600 টাকা।") is echoed.
+        return False
     if (
         b is not None
         or (getattr(session, "lapsed_pending", None) is not None and session.lapsed_pending[1] == session.turn_count)  # a pending 'did you mean...' question was just passed over
