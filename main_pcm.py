@@ -8785,13 +8785,13 @@ def _ollama_finished_sync(text: str, lang: str) -> str | None:
     """One word from the intent model: DONE (a finished request, question or answer) or MORE (the caller stopped in the middle). "complete" for DONE, else None."""
     import urllib.request
 
-    from agent.llm import OLLAMA_MODEL, OLLAMA_URL
+    from agent.llm import OLLAMA_MODEL, OLLAMA_URL, _model_options
 
     prompt = (
         f'A caller on a clinic phone line said (speech recognition, may contain errors, language {lang}): "{text}"\n'
         "Did the caller finish what they were saying (a complete request, question or answer), or did they stop in the middle of a sentence? Reply with exactly one word: DONE or MORE."
     )
-    payload = json.dumps({"model": OLLAMA_MODEL, "prompt": prompt, "stream": False, "keep_alive": -1, "options": {"temperature": 0.0, "num_predict": 3}}).encode("utf-8")
+    payload = json.dumps({"model": OLLAMA_MODEL, "prompt": prompt, "stream": False, "keep_alive": -1, "options": {**_model_options(), "num_predict": 3}}).encode("utf-8")  # SAME num_ctx as every other call: a request with another context size makes Ollama evict the loaded model and try to load a huge one (owner's call, 2026-11-03 14:27)
     req = urllib.request.Request(OLLAMA_URL, data=payload, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=COMPLETENESS_LLM_TIMEOUT_S + 0.5) as resp:
         body = json.loads(resp.read().decode("utf-8"))
