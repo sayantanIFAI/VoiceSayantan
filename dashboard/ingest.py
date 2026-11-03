@@ -18,12 +18,14 @@ logger = logging.getLogger("dashboard.ingest")
 def ingest_once(cfg: Config, store: Store) -> dict:
     stats = {"log_events": 0, "calls": 0, "live": 0, "ollama": 0, "readings": 0}
     today = clinic_today()
+    # the log parser learned new lines: read the logs from the start once (agents' lines already read were skipped, and the saved position is past them)
+    logs_again = store.needs_logs_backfill()
     backfill = (
         store.needs_calls_backfill()
     )  # a new column of `calls` is filled by reading the journals and archives again
 
     for path in sorted({p for pattern in cfg.log_files for p in glob.glob(pattern)}):
-        inode, offset, head = store.get_source(path)
+        inode, offset, head = (0, 0, "") if logs_again else store.get_source(path)
         events, inode, offset, head = logparse.read_new(path, inode, offset, head, cfg.keep_transcripts)
         if events:
             stats["log_events"] += store.add_log_events(events)
@@ -58,7 +60,7 @@ def ingest_once(cfg: Config, store: Store) -> dict:
 
     for path in sorted({p for pattern in cfg.ollama_logs for p in glob.glob(pattern)}):
         key = "ollama:" + path
-        inode, offset, head = store.get_source(key)
+        inode, offset, head = (0, 0, "") if logs_again else store.get_source(key)
         calls, inode, offset, head = logparse.read_new(path, inode, offset, head, parser=ollama_log.parse_line)
         if calls:
             stats["ollama"] += store.add_ollama(calls)
@@ -78,6 +80,8 @@ def ingest_once(cfg: Config, store: Store) -> dict:
     store.prune_speed(cfg.speed_days, today)
     if backfill:
         store.calls_backfilled()
+    if logs_again:
+        store.logs_backfilled()
     store.set_meta("last_ingest", datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"))
     return stats
 

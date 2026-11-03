@@ -161,8 +161,11 @@ def note_event(db, memory: CallMemory, ev) -> int:
 
 
 def add_ollama(db, calls: list) -> int:
+    """Only the two routes the agent uses for its models. The rest is health checks (the agent asks /api/tags every few seconds), which would drown them."""
     n = 0
     for c in calls:
+        if c.route == "other":
+            continue
         n += db.execute(
             "INSERT OR IGNORE INTO ollama_calls VALUES (?,?,?,?,?,?)", (c.day, c.time, c.status, c.route, c.ms, c.path)
         ).rowcount

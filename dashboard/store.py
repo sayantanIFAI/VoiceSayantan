@@ -48,6 +48,9 @@ _SUMMARY_COLUMNS = (
 
 # bump when a new column of `calls` must be filled from journals already read: the journals and archives are then read again (saving a call twice changes nothing)
 CALLS_SCHEMA = "2"
+# bump when the log parser learns a new kind of line: the logs are then read again from the start. Every table they fill ignores a row it already has,
+# so this changes nothing twice. (A parser that gains a line kind cannot see the lines it skipped before, because the saved read position is past them.)
+LOGS_SCHEMA = "2"
 _NEW_CALL_COLUMNS = (("median_reply_ms", "INTEGER"), ("slow_replies", "INTEGER"), ("turns", "INTEGER"))
 
 
@@ -164,6 +167,12 @@ class Store:
 
     def calls_backfilled(self) -> None:
         self.set_meta("calls_schema", CALLS_SCHEMA)
+
+    def needs_logs_backfill(self) -> bool:
+        return self.get_meta("logs_schema") != LOGS_SCHEMA
+
+    def logs_backfilled(self) -> None:
+        self.set_meta("logs_schema", LOGS_SCHEMA)
 
     def call_day_for(self, call_id: str, log_day: str) -> str | None:
         """The day a call is filed under in `calls`, for a call seen in the log on `log_day` (the journal and the log can differ by one day)."""

@@ -335,3 +335,35 @@ def test_the_page_loads_the_speed_script_and_the_script_writes_text_only():
 @pytest.mark.parametrize("stage", speed.STAGES)
 def test_every_stage_the_agent_marks_has_a_label(stage):
     assert stage in speed.STAGE_INFO
+
+
+def test_logs_are_read_again_once_when_the_parser_learns_new_lines(tmp_path):
+    """A dashboard built before the speed view had already read past every `turn timing:` line without keeping it. The saved read position is past
+    those lines, so without a one-off re-read the new view would stay empty for everything already in the logs."""
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    ingest.ingest_once(cfg, store)
+    db = sqlite3.connect(cfg.db_path)
+    n = db.execute("SELECT COUNT(*) FROM turn_timing").fetchone()[0]
+    assert n > 0
+    db.execute("DELETE FROM turn_timing")  # what the older dashboard left: positions at the end of the logs, no timings
+    db.execute("DELETE FROM asr_engine_timing")
+    db.execute("DELETE FROM meta WHERE key='logs_schema'")
+    db.commit()
+    assert store.needs_logs_backfill()
+    ingest.ingest_once(cfg, store)
+    assert db.execute("SELECT COUNT(*) FROM turn_timing").fetchone()[0] == n
+    assert not store.needs_logs_backfill()
+    ingest.ingest_once(cfg, store)
+    assert (
+        db.execute("SELECT COUNT(*) FROM turn_timing").fetchone()[0] == n
+    )  # and not again, and nothing is counted twice
+
+
+def test_only_the_two_model_routes_of_ollama_are_stored(tmp_path):
+    store = Store(str(tmp_path / "d.db"))
+    calls = [ollama_log.OllamaCall("2026-11-03", "11:08:17", 200, 33.2, "other", "/api/tags")] * 5 + [
+        ollama_log.OllamaCall("2026-11-03", "11:08:18", 200, 410.0, "generate", "/api/generate"),
+        ollama_log.OllamaCall("2026-11-03", "11:08:19", 200, 25.0, "embed", "/api/embed"),
+    ]
+    assert store.add_ollama(calls) == 2
