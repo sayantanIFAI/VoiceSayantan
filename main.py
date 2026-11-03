@@ -2226,8 +2226,9 @@ async def _slice_utterance(session: CallSession, start_s: float, end_s: float, s
 # before the apology is spoken. Equal to the model's own default deadline (agent/llm.py, 12 s, REASONED, not
 # measured on real telephony). The holding phrase is spoken once FILLER_THRESHOLD_S has passed without an answer.
 INTENT_BUDGET_S = float(os.environ.get("INTENT_TURN_BUDGET_S", "12"))
-# The semantic-cache embedding lookup gets this head start on the model; after that both run together.
-CACHE_HEAD_START_S = float(os.environ.get("INTENT_CACHE_HEAD_START_S", "0.15"))
+# The semantic-cache lookup gets this head start on the model; after that both run together. An exact hit answers in about a millisecond, so a short start catches every one (tests/test_latency_and_cache.py pins a 50 ms lookup as inside it); the embedding behind a
+# semantic hit takes 0.15-0.2 s on the CPU, so a longer start only held every model turn back by that much (owner, 2026-11-03: pod logs, 269 of 464 hits came inside the old 0.15 s, nearly all exact).
+CACHE_HEAD_START_S = float(os.environ.get("INTENT_CACHE_HEAD_START_S", "0.08"))
 # ...and it may never hold the turn for more than this (kept as a ceiling on the head start).
 CACHE_LOOKUP_MAX_S = float(os.environ.get("INTENT_CACHE_MAX_S", "1.5"))
 # Below this much budget left, asking the model is pointless: go straight to the apology.
