@@ -1,0 +1,80 @@
+; Lab PJSIP config for the free SIP-trunk simulation. Rendered by
+; install_asterisk.sh (passwords + bind port + the pod's current public IP
+; are substituted in -- the public IP changes every time the pod is
+; recreated, so this file is regenerated on every install run, never
+; hand-edited in place).
+;
+; This is an isolated lab config: plaintext auth, no TLS. Never expose it
+; beyond the private lab network / the specific ports you mean to forward.
+
+[lab-udp]
+type=transport
+protocol=udp
+bind=0.0.0.0:REPLACE_WITH_BIND_PORT
+; Tells Asterisk what IP/port to put in outgoing SDP and Contact headers so
+; phones outside the container's private network (172.22.x.x) can reply --
+; without this, RTP/SIP would advertise an address nothing can route to.
+external_media_address=REPLACE_WITH_PUBLIC_IP
+external_signaling_address=REPLACE_WITH_PUBLIC_IP
+local_net=172.22.0.0/16
+local_net=10.0.0.0/8
+
+[1001]
+type=endpoint
+transport=lab-udp
+context=lab-internal
+disallow=all
+allow=ulaw,alaw
+auth=auth1001
+aors=1001
+direct_media=no
+rtp_symmetric=yes
+force_rport=yes
+rewrite_contact=yes
+
+[auth1001]
+type=auth
+auth_type=userpass
+username=1001
+password=REPLACE_WITH_AGENT_PASSWORD
+
+[1001]
+type=aor
+max_contacts=1
+remove_existing=yes
+
+[2001]
+type=endpoint
+transport=lab-udp
+context=lab-internal
+disallow=all
+allow=ulaw,alaw
+auth=auth2001
+aors=2001
+direct_media=no
+rtp_symmetric=yes
+force_rport=yes
+rewrite_contact=yes
+
+[auth2001]
+type=auth
+auth_type=userpass
+username=2001
+password=REPLACE_WITH_CALLER_PASSWORD
+
+[2001]
+type=aor
+max_contacts=1
+remove_existing=yes
+
+[sipp-loopback]
+type=endpoint
+context=lab-internal
+disallow=all
+allow=ulaw
+direct_media=no
+
+[sipp-identify]
+type=identify
+endpoint=sipp-loopback
+match=127.0.0.1/32

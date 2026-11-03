@@ -146,6 +146,11 @@ fi
 #   export TWILIO_ALLOWED_CALLERS=919830012345,91...   # optional: only these callers are answered (digits, comma separated)
 #   export TWILIO_BRIDGE=0                  # optional: switch the phone bridge off
 
+# Free SIP-trunk lab (Asterisk, deploy/asterisk/): agent/asterisk_bridge.py, registered the same way as the Twilio
+# bridge above (tools/make_pcm_variant.py). No secret needed here -- unlike Twilio, Asterisk's websocket_client.conf
+# authenticates to the gateway with its own HTTP Basic Auth credentials (see deploy/gateway/asterisk_media_location.conf).
+#   export ASTERISK_BRIDGE=0                # optional: switch the Asterisk phone bridge off
+
 # Owner, 2026-10-29: the pod's own public URL, worked out from the pod id RunPod puts in the container's environment, so that no pod needs a local edit of this file (it used to be a hand-written line that
 # blocked every `git pull`). An explicit TWILIO_PUBLIC_BASE_URL set earlier (or in a .env file) always wins.
 if [ -z "${TWILIO_PUBLIC_BASE_URL:-}" ]; then

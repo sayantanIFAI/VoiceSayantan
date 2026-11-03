@@ -11286,4 +11286,12 @@ try:
 except Exception:  # never let telephony block the agent from starting
     logger.exception("Twilio bridge not installed")
 
+# Asterisk phone bridge -- see agent/asterisk_bridge.py (registered before the static mount below).
+try:
+    from agent import asterisk_bridge as _asterisk_bridge
+
+    _asterisk_bridge.install(app, ws_audio)
+except Exception:  # never let telephony block the agent from starting
+    logger.exception("Asterisk bridge not installed")
+
 app.mount("/", StaticFiles(directory="static/pcm", html=True), name="static")

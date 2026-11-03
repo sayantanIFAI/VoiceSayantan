@@ -1,0 +1,7 @@
+; RTP (audio) port range for the lab. Narrow on purpose -- a small, known
+; range is much easier to reason about (and to forward/open) than
+; Asterisk's 10000-20000 default. Must match whatever ports get exposed
+; on the pod's firewall/NAT mapping for audio to actually flow.
+[general]
+rtpstart=REPLACE_WITH_RTP_START
+rtpend=REPLACE_WITH_RTP_END

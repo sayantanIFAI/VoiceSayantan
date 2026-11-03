@@ -128,6 +128,21 @@ TWILIO_HOOK = (
     "\n"
 )
 
+# Asterisk lab-PBX phone bridge (PCM entrypoint only), same reasoning as TWILIO_HOOK above: a call arriving through
+# the project's own Asterisk (deploy/asterisk/) reaches the agent via the same ws_audio turn loop; agent/asterisk_bridge.py
+# only wraps chan_websocket's protocol so it looks like the browser socket. Registered before the static mount for the
+# same reason (it would otherwise be swallowed). ASTERISK_BRIDGE=0 turns it off; a problem here never blocks startup.
+ASTERISK_HOOK = (
+    "# Asterisk phone bridge -- see agent/asterisk_bridge.py (registered before the static mount below).\n"
+    "try:\n"
+    "    from agent import asterisk_bridge as _asterisk_bridge\n"
+    "\n"
+    "    _asterisk_bridge.install(app, ws_audio)\n"
+    "except Exception:  # never let telephony block the agent from starting\n"
+    '    logger.exception("Asterisk bridge not installed")\n'
+    "\n"
+)
+
 
 def main() -> None:
     src = open("main.py", encoding="utf-8").read()
@@ -245,7 +260,7 @@ def main() -> None:
     )
     rep(
         'app.mount("/", StaticFiles(directory="static", html=True), name="static")',
-        TWILIO_HOOK + 'app.mount("/", StaticFiles(directory="static/pcm", html=True), name="static")',
+        TWILIO_HOOK + ASTERISK_HOOK + 'app.mount("/", StaticFiles(directory="static/pcm", html=True), name="static")',
         "mount",
     )
 
