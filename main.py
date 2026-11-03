@@ -9513,6 +9513,13 @@ def _known_bn_words() -> set[str]:
                     words.update(unicodedata.normalize("NFC", w) for w in re.split(r"[\s.,]+", f) if len(w) >= 2)
         for ws in dept_talk.DEPT_WORDS.values():
             words.update(unicodedata.normalize("NFC", w).lower() for w in ws)
+    # Owner, 2026-11-03 ("নাম লিখুন" = write my name = book, heard cleanly, was answered "I did not understand"): every Bengali word the agent's own cue tables, phrases and routing rules contain is a word it can place
+    with contextlib.suppress(Exception):
+        agent_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent")
+        for fn in os.listdir(agent_dir):
+            if fn.endswith(".py"):
+                with open(os.path.join(agent_dir, fn), encoding="utf-8", errors="ignore") as fh:
+                    words.update(unicodedata.normalize("NFC", w) for w in re.findall(r"[\u0980-\u09FF]{2,}", fh.read()))
     _BN_LEXICON_CACHE.clear()
     _BN_LEXICON_CACHE[id(fp)] = words
     return words
@@ -9538,6 +9545,9 @@ def _clearly_garbled(session: CallSession, text: str, lang: str) -> bool:
         or call_end.is_closing_acknowledgement(text, lang)
         or repeat_request.asks_repeat(text)
         or match_lay_term(text) is not None
+        or doctor_enquiry_cues.asks_to_write_name(text, lang)
+        or early_routing.classify(text, lang) is not None
+        or booking_carryover.asks_to_book(text)
     ):
         return False
     known = _known_bn_words()
