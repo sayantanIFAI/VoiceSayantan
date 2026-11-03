@@ -11,6 +11,26 @@ A read-only screen for the voice agent. It shows, for a day, a week or a month:
 * a list of calls, filtered to "needs attention" by default. **Click a call to see what the caller said** (from the agent log, with the recogniser's
   agreement for each turn) **and what the agent recorded** (from the call journal).
 
+## Speed: p95 of every step
+
+The **Speed** section (link at the top of the page) shows p50, p95, p99 and max of every step the agent already times, for the period and language you pick:
+
+* **Each turn, start to first audio**: clean-up, language ID, recognition, understanding, lookups and wording, speech synthesis, hand-off to the line, and the total. From the agent's `turn timing:` log line.
+  The stages are slices of one path, so their p95s do not add up to the total's p95.
+* **Each recogniser** (Bengali, Hindi, English), whole time per clip. From `ASR timings:`.
+* **The model server**: the intent model (`/api/generate`) and the cache's embedding model (`/api/embed`), per request. From the Ollama log.
+* **Clinic API** time per turn. **Median first audio per call** and slow replies, from the call journal (this reaches back to calls whose logs are gone).
+* **By language heard** and **by how the turn was understood** (intent cache, fast path, a rule, the model, other), the **slowest turns** (click one to open its call), a **day-by-day trend**, and
+  **right now** figures read from the running agent's `/api/stats` and `/api/health` (its own per-language window, event-loop lag, audio backlog, cache hit rates).
+* The **waits built into turn-taking** (silence needed to end a turn, the "please hold" filler) are shown as configuration, because the agent does not log them.
+
+It needs nothing new in the agent. Settings: `DASHBOARD_OLLAMA_LOGS` (default `/workspace/logs/ollama.log`), `DASHBOARD_AGENT_URLS` (default the two agents on `127.0.0.1:8101` and `:8100`),
+`DASHBOARD_SPEED_DAYS` (90). Timings hold no caller words and are kept longer than transcripts.
+
+What it cannot measure is listed on the page: the wait before a turn starts, the phone line, TTS queueing apart from synthesis, the model's time inside one turn, each clinic API call separately.
+
+The first start after this update reads the journals and archives once more to fill the per-call figures; nothing is lost.
+
 ## It changes nothing in the agent
 
 No file under `agent/`, `main.py`, `main_pcm.py`, `clinic-api/`, `deploy/` or `tools/` is touched, and the dashboard does not import any of them. It reads

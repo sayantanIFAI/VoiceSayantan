@@ -8,7 +8,7 @@ import logging
 import os
 import threading
 
-from dashboard import journal, logparse
+from dashboard import journal, live, logparse, ollama_log
 from dashboard.config import Config
 from dashboard.store import Store, clinic_today
 
@@ -16,8 +16,11 @@ logger = logging.getLogger("dashboard.ingest")
 
 
 def ingest_once(cfg: Config, store: Store) -> dict:
-    stats = {"log_events": 0, "calls": 0, "live": 0}
+    stats = {"log_events": 0, "calls": 0, "live": 0, "ollama": 0, "readings": 0}
     today = clinic_today()
+    backfill = (
+        store.needs_calls_backfill()
+    )  # a new column of `calls` is filled by reading the journals and archives again
 
     for path in sorted({p for pattern in cfg.log_files for p in glob.glob(pattern)}):
         inode, offset, head = store.get_source(path)
@@ -31,7 +34,7 @@ def ingest_once(cfg: Config, store: Store) -> dict:
         _inode, seen, _head = store.get_source(key)
         total = journal.line_count(path)
         # the archiver rewrote the file with fewer lines: read it again (saving a call twice changes nothing)
-        if total < seen:
+        if backfill or total < seen:
             seen = 0
         if total == seen:
             continue
@@ -44,21 +47,37 @@ def ingest_once(cfg: Config, store: Store) -> dict:
     # archived days never change, so each is read once, and only if no journal for that day was read
     for path in journal.archive_files(cfg.archive_dir):
         key = "archive:" + path
-        if store.get_source(key)[1]:
+        if store.get_source(key)[1] and not backfill:
             continue
         day = journal.day_of(path)
-        if not store.has_finished_calls(day):
+        if backfill or not store.has_finished_calls(day):
             for _n, summary in journal.finished_calls(path):
                 store.save_call(day, summary)
                 stats["calls"] += 1
         store.put_source(key, 0, 1, "")
 
-    live = list(journal.inflight_calls(cfg.journal_dir))
+    for path in sorted({p for pattern in cfg.ollama_logs for p in glob.glob(pattern)}):
+        key = "ollama:" + path
+        inode, offset, head = store.get_source(key)
+        calls, inode, offset, head = logparse.read_new(path, inode, offset, head, parser=ollama_log.parse_line)
+        if calls:
+            stats["ollama"] += store.add_ollama(calls)
+        store.put_source(key, inode, offset, head)
+
+    for url in cfg.agent_urls:
+        readings = live.readings(url)
+        store.add_live(url.split("//", 1)[-1], readings)
+        stats["readings"] += len(readings)
+
+    in_progress = list(journal.inflight_calls(cfg.journal_dir))
     since = (datetime.date.fromisoformat(today) - datetime.timedelta(days=1)).isoformat()
-    store.replace_live(today, live, since)
-    stats["live"] = len(live)
+    store.replace_live(today, in_progress, since)
+    stats["live"] = len(in_progress)
 
     store.prune_transcripts(cfg.transcript_days, today)
+    store.prune_speed(cfg.speed_days, today)
+    if backfill:
+        store.calls_backfilled()
     store.set_meta("last_ingest", datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"))
     return stats
 

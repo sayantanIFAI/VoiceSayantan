@@ -4,6 +4,8 @@
   GET /api/summary           ?days=1&lang=bn            counts for the period
   GET /api/calls             ?days=1&lang=&tag=&limit=  the calls, newest first; tag: attention, dropped, transferred, clarified, said_wrong, ...
   GET /api/call              ?day=YYYY-MM-DD&id=<id>    one call: what the agent recorded, and what the recogniser heard
+  GET /api/latency           ?days=1&lang=&tier=        p50 / p95 / p99 of every timed step (see dashboard/speed.py)
+  GET /api/latency/slow      ?days=1&lang=&tier=&limit= the slowest turns, with the step that took longest
   GET /api/health            when the last ingest ran
 
 A transcript is personal data. The server listens on the loopback address unless told otherwise, and refuses to listen on any other address
@@ -17,6 +19,7 @@ import hmac
 import json
 import os
 import re
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -43,6 +46,10 @@ TAGS = frozenset(
     }
 )
 LANGS = frozenset({"", "bn", "hi", "en"})
+TIERS = frozenset({"", "cache", "fast_path", "model", "rule", "other"})
+_STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+SCRIPTS = {"/latency.js": os.path.join(_STATIC_DIR, "latency.js")}
+CACHE_S = 20.0  # a percentile over a month of turns takes a moment; the same question within this many seconds gets the same answer
 _DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _ID = re.compile(r"^[0-9A-Za-z_-]{1,80}$")
 LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
@@ -56,6 +63,7 @@ def _int(values: list[str], default: int, lo: int, hi: int) -> int:
 
 
 def make_handler(cfg: Config, store: Store):
+    cache: dict[tuple, tuple[float, bytes]] = {}
     expected = None
     if cfg.user or cfg.password:
         expected = "Basic " + base64.b64encode(f"{cfg.user}:{cfg.password}".encode()).decode()
@@ -84,6 +92,15 @@ def make_handler(cfg: Config, store: Store):
 
         def _json(self, obj, code: int = 200) -> None:
             self._send(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+
+        def _cached(self, key: tuple, compute) -> None:
+            now = time.monotonic()
+            hit = cache.get(key)
+            if hit is None or now - hit[0] > CACHE_S:
+                hit = cache[key] = (now, json.dumps(compute(), ensure_ascii=False).encode("utf-8"))
+                for k in [k for k, v in cache.items() if now - v[0] > 10 * CACHE_S]:
+                    cache.pop(k, None)
+            self._send(200, hit[1], "application/json; charset=utf-8")
 
         def _allowed(self) -> bool:
             if expected is None:
@@ -129,6 +146,22 @@ def make_handler(cfg: Config, store: Store):
                     if detail is None:
                         return self._json({"error": "no such call"}, 404)
                     self._json(detail)
+                elif url.path in ("/api/latency", "/api/latency/slow"):
+                    days, lang, tier = _int(q.get("days", []), 1, 1, 90), q.get("lang", [""])[0], q.get("tier", [""])[0]
+                    if lang not in LANGS or tier not in TIERS:
+                        return self._json({"error": "unknown lang or tier"}, 400)
+                    today = clinic_today()
+                    if url.path == "/api/latency":
+                        self._cached(("lat", days, lang, tier, today), lambda: store.latency(days, lang, tier, today))
+                    else:
+                        limit = _int(q.get("limit", []), 30, 1, 200)
+                        self._cached(
+                            ("slow", days, lang, tier, limit, today),
+                            lambda: {"turns": store.slowest_turns(days, lang, tier, limit, today)},
+                        )
+                elif url.path in SCRIPTS:
+                    with open(SCRIPTS[url.path], "rb") as f:
+                        self._send(200, f.read(), "application/javascript; charset=utf-8")
                 elif url.path == "/api/health":
                     self._json(
                         {

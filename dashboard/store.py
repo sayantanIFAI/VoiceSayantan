@@ -17,6 +17,7 @@ import sqlite3
 from collections import Counter
 from contextlib import closing
 
+from dashboard import speed
 from dashboard.classify import Labels, classify
 from dashboard.journal import CallSummary
 from dashboard.logparse import LogEvent
@@ -45,6 +46,11 @@ _SUMMARY_COLUMNS = (
 )
 
 
+# bump when a new column of `calls` must be filled from journals already read: the journals and archives are then read again (saving a call twice changes nothing)
+CALLS_SCHEMA = "2"
+_NEW_CALL_COLUMNS = (("median_reply_ms", "INTEGER"), ("slow_replies", "INTEGER"), ("turns", "INTEGER"))
+
+
 def clinic_today() -> str:
     """The clinic's date (UTC+5:30), the same clock the call journal uses to name its day files."""
     return (datetime.datetime.now(datetime.UTC) + datetime.timedelta(hours=5, minutes=30)).date().isoformat()
@@ -58,8 +64,14 @@ def day_range(days: int, today: str) -> tuple[str, str]:
 class Store:
     def __init__(self, path: str):
         self.path = path
+        self._memory = speed.CallMemory()
         with closing(self._connect()) as db:
-            db.executescript(_SCHEMA)
+            db.executescript(_SCHEMA + speed.SCHEMA)
+            have = {r["name"] for r in db.execute("PRAGMA table_info(calls)")}
+            for name, kind in _NEW_CALL_COLUMNS:
+                if name not in have:
+                    db.execute(f"ALTER TABLE calls ADD COLUMN {name} {kind}")  # noqa: S608 - fixed names
+            db.commit()
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=30)
@@ -73,33 +85,21 @@ class Store:
         with closing(self._connect()) as db, db:
             if not live:
                 db.execute("DELETE FROM calls WHERE call_id=? AND live=1", (s.call_id,))
+            sig = s.signals or {}
+            row = {
+                "day": day, "call_id": s.call_id, "live": int(live), "lang": s.languages[0] if s.languages else "", "channel": s.channel,
+                "category": lab.category, "transfer_reason": lab.transfer_reason, "transfer_group": lab.transfer_group,
+                "drop_cause": lab.drop_cause, "reasks": lab.reasks, "reask_reasons": json.dumps(lab.reask_reasons),
+                "booking_intent": int(lab.booking_intent), "booking_origin": lab.booking_origin,
+                "booking_confirmed": int(lab.booking_confirmed), "booking_changed": int(lab.booking_changed),
+                "wrong": json.dumps(lab.wrong_signals), "unhappy": int(lab.unhappy), "band": s.band, "score": s.score,
+                "tags": ",".join(lab.tags), "last4": s.last4, "detail": json.dumps(detail, ensure_ascii=False),
+                "median_reply_ms": sig.get("median_reply_ms"), "slow_replies": sig.get("slow_replies"), "turns": sig.get("turns"),
+            }  # fmt: skip
+            cols = ", ".join(row)
             db.execute(
-                "INSERT OR REPLACE INTO calls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    day,
-                    s.call_id,
-                    int(live),
-                    s.languages[0] if s.languages else "",
-                    s.channel,
-                    lab.category,
-                    lab.transfer_reason,
-                    lab.transfer_group,
-                    lab.drop_cause,
-                    lab.reasks,
-                    json.dumps(lab.reask_reasons),
-                    int(lab.booking_intent),
-                    lab.booking_origin,
-                    int(lab.booking_confirmed),
-                    int(lab.booking_changed),
-                    json.dumps(lab.wrong_signals),
-                    int(lab.unhappy),
-                    s.band,
-                    s.score,
-                    ",".join(lab.tags),
-                    s.last4,
-                    json.dumps(detail, ensure_ascii=False),
-                ),
-            )
+                f"INSERT OR REPLACE INTO calls({cols}) VALUES ({', '.join('?' for _ in row)})", list(row.values())
+            )  # noqa: S608 - fixed names
         return lab
 
     def has_finished_calls(self, day: str) -> bool:
@@ -122,6 +122,11 @@ class Store:
         n = 0
         with closing(self._connect()) as db, db:
             for ev in events:
+                if ev.kind in ("timing", "asr_engines", "tier"):
+                    speed.note_event(
+                        db, self._memory, ev
+                    )  # timings hold no caller words, so they are not part of the transcript
+                    continue
                 cur = db.execute(
                     "INSERT OR IGNORE INTO log_events VALUES (?,?,?,?,?)",
                     (ev.day, ev.call_id, ev.time, ev.kind, json.dumps(ev.data, ensure_ascii=False, sort_keys=True)),
@@ -136,7 +141,43 @@ class Store:
                     db.execute(
                         "UPDATE log_calls SET ended=? WHERE log_day=? AND call_id=?", (ev.time, ev.day, ev.call_id)
                     )
+                speed.note_event(
+                    db, self._memory, ev
+                )  # remembers the language of `heard` and forgets a call at its `end`
         return n
+
+    def add_ollama(self, calls: list) -> int:
+        with closing(self._connect()) as db, db:
+            return speed.add_ollama(db, calls)
+
+    def add_live(self, source: str, readings: list[tuple[str, float]]) -> None:
+        if readings:
+            with closing(self._connect()) as db, db:
+                speed.add_live(db, datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"), source, readings)
+
+    def prune_speed(self, keep_days: int, today: str) -> None:
+        with closing(self._connect()) as db, db:
+            speed.prune(db, keep_days, today)
+
+    def needs_calls_backfill(self) -> bool:
+        return self.get_meta("calls_schema") != CALLS_SCHEMA
+
+    def calls_backfilled(self) -> None:
+        self.set_meta("calls_schema", CALLS_SCHEMA)
+
+    def call_day_for(self, call_id: str, log_day: str) -> str | None:
+        """The day a call is filed under in `calls`, for a call seen in the log on `log_day` (the journal and the log can differ by one day)."""
+        with closing(self._connect()) as db:
+            rows = [r["day"] for r in db.execute("SELECT day FROM calls WHERE call_id=?", (call_id,))]
+        want = datetime.date.fromisoformat(log_day)
+        near = [d for d in rows if abs((datetime.date.fromisoformat(d) - want).days) <= 1]
+        return min(near, key=lambda d: (abs((datetime.date.fromisoformat(d) - want).days), d)) if near else None
+
+    def latency(self, days: int, lang: str, tier: str, today: str) -> dict:
+        return speed.report(self, days, lang, tier, today)
+
+    def slowest_turns(self, days: int, lang: str, tier: str, limit: int, today: str) -> list[dict]:
+        return speed.slowest(self, days, lang, tier, limit, today)
 
     def prune_transcripts(self, keep_days: int, today: str) -> None:
         cutoff = (datetime.date.fromisoformat(today) - datetime.timedelta(days=keep_days)).isoformat()

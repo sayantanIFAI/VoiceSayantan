@@ -41,6 +41,17 @@ tr.call{cursor:pointer}tr.call:hover td,tr.sel td{background:var(--soft)}
 .agree{display:inline-block;width:46px;height:6px;background:var(--soft);border-radius:3px;vertical-align:middle;margin-right:4px;overflow:hidden}.agree i{display:block;height:100%}
 .said{font-size:15px}
 .empty{color:var(--muted);padding:14px 0}
+.sp-block{margin-top:18px}.sp-h{font-size:14px;font-weight:500;margin:0 0 6px}.sp-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.sp-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:6px}
+.sp-tile{background:var(--soft);border-radius:8px;padding:8px 10px}.sp-tile b{display:block;font-size:19px;font-weight:500;margin-bottom:2px}.sp-tile b.pill{display:inline-block;font-size:19px}.sp-tile span{font-size:12px;color:var(--muted)}
+.sp-chart{margin-top:6px}.sp-row{display:grid;grid-template-columns:180px 1fr 170px;gap:8px;align-items:center;margin:4px 0;font-size:13px}.sp-total{border-top:1px solid var(--line);padding-top:6px;margin-top:8px;font-weight:500}
+.sp-track{position:relative;height:16px;background:var(--soft);border-radius:3px;overflow:hidden}.sp-b95{position:absolute;left:0;top:0;height:100%;opacity:.35}.sp-b50{position:absolute;left:0;top:3px;height:10px;border-radius:0 3px 3px 0}
+.sp-mark{position:absolute;top:0;height:100%;border-left:1px dotted var(--muted)}.sp-mark.slow{border-left-color:var(--bad)}
+.sp-val{font-size:12px;color:var(--muted);text-align:right;white-space:pre}
+.sp-stack{display:flex;height:12px;width:150px;border-radius:3px;overflow:hidden;gap:1px}.sp-stack div{height:100%}
+.sp-grp td{background:var(--soft);color:var(--muted);font-size:12px}.sp-total-row td{font-weight:500}
+th.num,td.num{text-align:right}.sp-src{font-size:13px;font-weight:500;margin:10px 0 4px}.sp-legend{margin-top:8px}
+@media(max-width:620px){.sp-row{grid-template-columns:120px 1fr}.sp-val{grid-column:1 / -1;text-align:left}}
 </style>
 </head>
 <body>
@@ -50,7 +61,7 @@ tr.call{cursor:pointer}tr.call:hover td,tr.sel td{background:var(--soft)}
   <div class="controls">
     <label>Period <select id="days"><option value="1">Today</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option></select></label>
     <label>Language <select id="lang"><option value="">All</option><option value="bn">Bengali</option><option value="hi">Hindi</option><option value="en">English</option></select></label>
-    <span id="stamp"></span>
+    <a href="#speedCard">Speed</a> <span id="stamp"></span>
   </div>
 </div>
 
@@ -66,6 +77,11 @@ tr.call{cursor:pointer}tr.call:hover td,tr.sel td{background:var(--soft)}
   <div class="card"><h2>The caller disagreed or something went wrong</h2><div id="wrong"></div></div>
 </div>
 
+<div class="card" id="speedCard">
+  <h2>Speed: p95 of every step</h2>
+  <div id="speed"><div class="empty">Loading ...</div></div>
+</div>
+
 <div class="card" id="callsCard">
   <h2>Calls</h2>
   <div class="filters" id="filters"></div>
@@ -79,6 +95,7 @@ tr.call{cursor:pointer}tr.call:hover td,tr.sel td{background:var(--soft)}
     <li>"Did you mean ...?" and "which one, A or B?" questions. They are not recorded, so clarifications here are the re-asks only.</li>
     <li>Whether the AI offered a booking. It is not recorded, so "booking after an enquiry" counts calls where an enquiry came first and a booking followed.</li>
     <li>A direct "that is wrong" from the caller. There is no detector; the panel counts visible disagreement (a correction at the read-back, a complaint, a request for a person).</li>
+    <li>The wait before a turn starts, the phone line, and the TTS queue: see the Speed section for what is and is not timed.</li>
     <li>How wrong the speech recognition was. That needs a human transcript (tools/asr_eval.py).</li>
   </ul>
 </div>
@@ -203,10 +220,12 @@ function loadCalls(){get("api/calls?"+qs()+"&tag="+encodeURIComponent(state.tag)
 function load(){
   get("api/summary?"+qs()).then(drawSummary).catch(function(){$("kpis").textContent="Could not load."});
   loadCalls();
+  if(window.loadSpeed)window.loadSpeed();
   get("api/health").then(function(h){$("stamp").textContent=h.last_ingest?"read "+h.last_ingest.replace("T"," ").replace("+00:00"," UTC"):"nothing read yet"}).catch(function(){})}
 $("days").onchange=function(){state.days=this.value;load()};
 $("lang").onchange=function(){state.lang=this.value;load()};
-drawFilters();load();setInterval(function(){get("api/summary?"+qs()).then(drawSummary).catch(function(){});loadCalls()},15000);
+drawFilters();load();setInterval(function(){get("api/summary?"+qs()).then(drawSummary).catch(function(){});loadCalls();if(window.loadSpeed)window.loadSpeed()},15000);
 </script>
+<script src="latency.js"></script>
 </body>
 </html>

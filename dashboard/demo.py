@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import math
 import os
 import random
 
@@ -45,17 +46,60 @@ def _ev(events: list, kind: str, /, **payload) -> None:
     events.append({"seq": len(events) + 1, "kind": kind, "payload": payload})
 
 
-def _scenario(kind: str, m: _Maker) -> tuple[list, list[tuple[str, float]], str | None]:
-    """(events, [(caller text, agreement)], caller phone) for one kind of call."""
+def _turn_timing(r: random.Random, lang: str) -> dict:
+    """One made-up turn's timing, shaped like the agent's: stages that add up to the total, a tier, the recognisers' own times, the model's time."""
+    tier = r.choices(["fast_path", "cache", "rule", "model", "other"], weights=[34, 8, 6, 30, 22])[0]
+    ln = lambda median, sigma: max(1, int(r.lognormvariate(math.log(median), sigma)))  # noqa: E731
+    intent = {
+        "fast_path": ln(15, 0.5),
+        "cache": ln(8, 0.4),
+        "rule": ln(5, 0.4),
+        "model": ln(420, 0.45),
+        "other": ln(25, 0.6),
+    }[tier]
+    tts_hit = r.random() < 0.2  # a clip the synthesiser had already made
+    api_calls = r.choice([0, 1, 1, 2, 3]) if tier in ("fast_path", "model", "other") else 0
+    api_ms = sum(ln(35, 0.5) for _ in range(api_calls))
+    st = {
+        "prep": ln(12, 0.4),
+        "lid": ln(190, 0.22),
+        "asr": ln(150, 0.6),
+        "intent": intent,
+        "reply": ln(30, 0.6) + api_ms,
+        "tts": 8 if tts_hit else ln(230, 0.5),
+        "send": ln(3, 0.4),
+    }
+    if r.random() < 0.04:  # a slow tail: one stage several times its usual time
+        k = r.choice(["asr", "intent", "tts", "reply"])
+        st[k] *= r.randint(3, 6)
+    engines = {lang if lang in ("bn", "hi") else "bn": ln(300, 0.35), "en": ln(160, 0.35)}
+    return {
+        "tier": tier,
+        "stages": st,
+        "total": sum(st.values()),
+        "api_calls": api_calls,
+        "api_ms": api_ms,
+        "engines": engines,
+    }
+
+
+def _scenario(kind: str, m: _Maker) -> tuple[list, list[tuple[str, float, dict]], str | None]:
+    """(events, [(caller text, agreement, timing)], caller phone) for one kind of call."""
     ev: list = []
-    turns: list[tuple[str, float]] = []
+    turns: list[tuple[str, float, dict]] = []
     r = m.rng
     lang = r.choice(["bn", "bn", "bn", "hi", "en"])
     _ev(ev, "start", channel="voice", disclosure_version="v1")
     _ev(ev, "language", language=lang)
 
     def say(key: str, agree: float | None = None) -> None:
-        turns.append((r.choice(TEXTS[key]), agree if agree is not None else round(r.uniform(0.82, 1.0), 2)))
+        turns.append(
+            (
+                r.choice(TEXTS[key]),
+                agree if agree is not None else round(r.uniform(0.82, 1.0), 2),
+                _turn_timing(r, lang),
+            )
+        )
 
     sig = {
         "turns": 3,
@@ -149,6 +193,11 @@ def _scenario(kind: str, m: _Maker) -> tuple[list, list[tuple[str, float]], str 
         band, score = "neutral", 66
     else:
         raise ValueError(kind)
+    totals = sorted(t[2]["total"] for t in turns)
+    if totals:
+        sig.update(
+            median_reply_ms=totals[len(totals) // 2], slow_replies=sum(1 for x in totals if x > 1500), turns=len(totals)
+        )
     _ev(ev, "satisfaction", score=score, band=band, reasons=[], version="implicit-v1", basis="behaviour", signals=sig)
     _ev(ev, "end", outcome=outcome)
     return ev, turns, phone
@@ -182,6 +231,7 @@ def write_demo(root: str, per_day: int = 0, seed: int = 7) -> Config:
     log_path = os.path.join(root, "agent.log")
     today = datetime.date.fromisoformat(clinic_today())
     log_lines: list[str] = []
+    ollama_lines: list[str] = []
     for back in (1, 0):
         day = (today - datetime.timedelta(days=back)).isoformat()
         kinds = list(MIX)
@@ -196,11 +246,37 @@ def write_demo(root: str, per_day: int = 0, seed: int = 7) -> Config:
             minute = 8 * 60 + n * 3
             hh, mm = divmod(minute, 60)
             log_lines.append(f"{_stamp(day, hh, mm, 0)} INFO main_pcm: [{cid}] call started (4 active)")
-            for i, (text, agree) in enumerate(turns):
+            for i, (text, agree, tm) in enumerate(turns):
                 lang = next((e["payload"]["language"] for e in events if e["kind"] == "language"), "bn")
+                t0 = 5 + i * 9
                 log_lines.append(
-                    f"{_stamp(day, hh, mm, 5 + i * 9)} INFO main_pcm: [{cid}] heard ({lang}, rnnt, agreement {agree:.2f}): {text!r}"
+                    f"{_stamp(day, hh, mm, t0)} INFO main_pcm: [{cid}] heard ({lang}, rnnt, agreement {agree:.2f}): {text!r}"
                 )
+                marker = {
+                    "cache": "intent cache L1 hit",
+                    "fast_path": "fast path resolved test_rate (0.91) -- no LLM call",
+                    "rule": "sitting question read by rule -- no model call",
+                    "model": "fast path test_rate refused (below the commit floor) -- the model decides",
+                }.get(tm["tier"])
+                if marker:
+                    log_lines.append(f"{_stamp(day, hh, mm, t0 + 1)} INFO main_pcm: [{cid}] {marker}")
+                log_lines.append(
+                    f"{_stamp(day, hh, mm, t0 + 2)} INFO main_pcm: [{cid}] ASR timings: "
+                    + " | ".join(f"{k} {v} ms" for k, v in tm["engines"].items())
+                )
+                parts = " | ".join(f"{k} {v} ms" for k, v in tm["stages"].items())
+                log_lines.append(
+                    f"{_stamp(day, hh, mm, t0 + 3)} INFO main_pcm: [{cid}] turn timing: {parts} | total {tm['total']} ms"
+                    f" | clinic API {tm['api_calls']} calls {tm['api_ms']} ms"
+                )
+                gin = f"{day.replace('-', '/')} - {hh % 24:02d}:{mm % 60:02d}:{(t0 + 1) % 60:02d}"
+                ollama_lines.append(
+                    f'[GIN] {gin} | 200 | {m.rng.uniform(18, 60):.1f}ms |       127.0.0.1 | POST     "/api/embed"'
+                )
+                if tm["tier"] == "model":
+                    ollama_lines.append(
+                        f'[GIN] {gin} | 200 | {tm["stages"]["intent"] + 0.4:.1f}ms |       127.0.0.1 | POST     "/api/generate"'
+                    )
             if any(e["payload"].get("action") == "handoff" or e["kind"] == "escalation" for e in events):
                 reason = next(e["payload"]["reason"] for e in events if e["kind"] == "escalation")
                 log_lines.append(f"{_stamp(day, hh, mm, 40)} WARNING main_pcm: [{cid}] handoff to human: {reason}")
@@ -220,6 +296,9 @@ def write_demo(root: str, per_day: int = 0, seed: int = 7) -> Config:
             )
     with open(log_path, "w", encoding="utf-8") as f:
         f.write("\n".join(log_lines) + "\n")
+    ollama_path = os.path.join(root, "ollama.log")
+    with open(ollama_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(ollama_lines) + "\n")
     return Config(
         journal_dir=journal,
         archive_dir=os.path.join(root, "archive"),
@@ -232,4 +311,7 @@ def write_demo(root: str, per_day: int = 0, seed: int = 7) -> Config:
         poll_s=10.0,
         keep_transcripts=True,
         transcript_days=30,
+        ollama_logs=(ollama_path,),
+        agent_urls=(),
+        speed_days=90,
     )

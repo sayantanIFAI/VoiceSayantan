@@ -20,6 +20,10 @@ class Config:
     poll_s: float
     keep_transcripts: bool  # False: the dashboard never stores what the caller said
     transcript_days: int  # transcripts older than this are deleted from the dashboard's store
+    # the speed view: the Ollama log(s) (paths or globs), the agents whose /api/stats and /api/health are read every round, and how long timings are kept
+    ollama_logs: tuple[str, ...] = ()
+    agent_urls: tuple[str, ...] = ()
+    speed_days: int = 90
 
 
 def from_env() -> Config:
@@ -41,4 +45,15 @@ def from_env() -> Config:
         poll_s=float(os.environ.get("DASHBOARD_POLL_S", "10")),
         keep_transcripts=os.environ.get("DASHBOARD_KEEP_TRANSCRIPTS", "1") == "1",
         transcript_days=int(os.environ.get("DASHBOARD_TRANSCRIPT_DAYS", "30")),
+        ollama_logs=tuple(
+            f.strip()
+            for f in os.environ.get("DASHBOARD_OLLAMA_LOGS", "/workspace/logs/ollama.log").split(",")
+            if f.strip()
+        ),
+        agent_urls=tuple(
+            u.strip()
+            for u in os.environ.get("DASHBOARD_AGENT_URLS", "http://127.0.0.1:8101,http://127.0.0.1:8100").split(",")
+            if u.strip()
+        ),
+        speed_days=int(os.environ.get("DASHBOARD_SPEED_DAYS", "90")),
     )
