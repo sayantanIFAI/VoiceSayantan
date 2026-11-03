@@ -2346,6 +2346,17 @@ async def _resolve_intent_uncached(session: CallSession, text: str, lang: str, k
         logger.info("[%s] intent cache %s hit", session.call_id, how)
         return cached
 
+    pre = getattr(session, "preempt", None)
+    if pre is not None:
+        session.preempt = None
+        if pre.get("key") == key:
+            with contextlib.suppress(Exception):
+                _pdata = await asyncio.wait_for(asyncio.shield(pre["task"]), timeout=max(0.05, left()))
+                if isinstance(_pdata, dict) and _pdata:
+                    logger.info("[%s] preemptive intent used: the model had already read this sentence", session.call_id)
+                    _saved = asyncio.ensure_future(asyncio.to_thread(_intent_cache.put, key, _pdata))
+                    _saved.add_done_callback(lambda f: f.cancelled() or f.exception())
+                    return _pdata
     budget_left = left()
     if budget_left < MIN_MODEL_BUDGET_S:
         raise ExtractionError(f"intent budget of {INTENT_BUDGET_S}s used up before the model was asked")
@@ -8665,6 +8676,165 @@ def _next_wake_delay(decision) -> float:
     return min(base, max(MIN_WAKE_S, decision.commit_after_s + WAKE_SLACK_S))
 
 
+# ---------------------------------------------------------------------------------------------------------------- end-of-turn speed-ups (owner, 2026-11-03)
+# Three changes, each with its own switch that works WITHOUT a restart: create the "kill file" and the next turn behaves as before.
+#   QUESTION_WAITS    /workspace/.question_waits_off    how long a silence is waited out depends on what the agent just asked (yes/no, age, day, name, phone, address, open request);
+#                                                       the values can be changed in /workspace/endpoint_waits.json (read again whenever the file changes)
+#   COMPLETENESS_LLM  /workspace/.completeness_llm_off  when the rules cannot tell whether the words so far are a finished sentence, the intent model is asked (one word, ~100 ms);
+#                                                       it can only SHORTEN a wait (a "finished" verdict), never lengthen it
+#   PREEMPTIVE_INTENT /workspace/.preemptive_off        the intent model starts on the speculative transcript during the silence wait; if the final sentence is the same, its answer is
+#                                                       used at once. A different final sentence simply never matches it, so nothing is answered twice and nothing is dropped
+# (each is also off when its environment variable is set to 0)
+_QUESTION_WAITS_DEFAULT = {
+    "yes_no": {"silence": 1.0, "complete": 0.5},
+    "age": {"silence": 1.2, "complete": 0.6},
+    "day": {"silence": 1.4, "complete": 0.8},
+    "name": {"silence": 1.6, "complete": 0.9},
+    "phone": {"silence": 2.0, "complete": 1.2},
+    "address": {"silence": 2.6, "complete": 1.6},
+    "open": {"silence": 1.6, "complete": 1.0},
+}
+_QW_CACHE: dict = {"mtime": None, "data": None}
+_QW_FILE = "/workspace/endpoint_waits.json"
+_BOOKING_FIELD_KIND = {
+    "phone": "phone", "contact_phone": "phone", "patient_name": "name", "doctor_name": "name", "patient_age": "age", "date": "day", "time_slot": "day",
+    "patient_address": "address", "police_station": "address",
+}
+
+
+def _flag_on(env_name: str, kill_file: str) -> bool:
+    return os.environ.get(env_name, "1") == "1" and not os.path.exists(kill_file)
+
+
+def _question_waits() -> dict:
+    """The per-question waits: the built-in values, overridden by /workspace/endpoint_waits.json ({"yes_no": {"silence": 1.0, "complete": 0.5}, ...}) whenever that file changes."""
+    try:
+        mtime = os.path.getmtime(_QW_FILE) if os.path.exists(_QW_FILE) else None
+    except OSError:
+        mtime = None
+    if _QW_CACHE["data"] is not None and _QW_CACHE["mtime"] == mtime:
+        return _QW_CACHE["data"]
+    data = {k: dict(v) for k, v in _QUESTION_WAITS_DEFAULT.items()}
+    if mtime is not None:
+        with contextlib.suppress(Exception):
+            with open(_QW_FILE, encoding="utf-8") as fh:
+                for kind, vals in (json.load(fh) or {}).items():
+                    if kind in data and isinstance(vals, dict):
+                        for key in ("silence", "complete"):
+                            if isinstance(vals.get(key), (int, float)) and 0.2 <= float(vals[key]) <= 5.0:
+                                data[kind][key] = float(vals[key])
+    _QW_CACHE["mtime"], _QW_CACHE["data"] = mtime, data
+    return data
+
+
+def _expected_answer_kind(session: CallSession) -> str | None:
+    """What kind of answer the agent is waiting for: yes_no, age, day, name, phone, address, open (the greeting / "how can I help"), or None (anything else keeps the default wait)."""
+    try:
+        b = session.booking
+        if b is not None:
+            if b.stage in ("confirming", "awaiting_charge_confirm") or _readback_pending(session):
+                return "yes_no"
+            if b.stage == "collecting":
+                missing = missing_required(b)
+                return _BOOKING_FIELD_KIND.get(missing[0]) if missing else None
+            return None
+        if (
+            session.pending_entity is not None
+            or session.awaiting_handoff_offer
+            or session.awaiting_resume
+            or session.awaiting_close_answer
+            or session.awaiting_language_switch_offer
+            or session.awaiting_draft_answer
+            or session.awaiting_pref_answer
+        ):
+            return "yes_no"
+        dp = getattr(session, "dept_pending", None)
+        if dp and dp.get("kind") == "confirm_one" and session.turn_count - dp.get("turn", -99) <= 3:
+            return "yes_no"
+        chk = getattr(session, "doctor_check", None)
+        if chk and session.turn_count - chk["turn"] <= 2:
+            return "yes_no"
+        if _last_line_generic(session):
+            return "open"
+    except Exception:  # noqa: BLE001 - a wait is tuned, never broken
+        return None
+    return None
+
+
+def _apply_question_waits(session: CallSession, cfg):
+    """(cfg with the waits of the question just asked, the kind). The default wait for an unclear sentence and the wait for a finished-looking one are both set from the table."""
+    if not _flag_on("QUESTION_WAITS", "/workspace/.question_waits_off"):
+        return cfg, None
+    kind = _expected_answer_kind(session)
+    w = _question_waits().get(kind) if kind else None
+    if not w:
+        return cfg, kind
+    silence = max(1.0, float(w["silence"]))
+    complete = min(silence, float(w["complete"]))
+    return dataclasses.replace(cfg, silence_confirm_s=silence, complete_confirm_s=complete), kind
+
+
+COMPLETENESS_LLM_TIMEOUT_S = float(os.environ.get("COMPLETENESS_LLM_TIMEOUT_S", "1.0"))
+
+
+def _ollama_finished_sync(text: str, lang: str) -> str | None:
+    """One word from the intent model: DONE (a finished request, question or answer) or MORE (the caller stopped in the middle). "complete" for DONE, else None."""
+    import urllib.request
+
+    from agent.llm import OLLAMA_MODEL, OLLAMA_URL
+
+    prompt = (
+        f'A caller on a clinic phone line said (speech recognition, may contain errors, language {lang}): "{text}"\n'
+        "Did the caller finish what they were saying (a complete request, question or answer), or did they stop in the middle of a sentence? Reply with exactly one word: DONE or MORE."
+    )
+    payload = json.dumps({"model": OLLAMA_MODEL, "prompt": prompt, "stream": False, "keep_alive": -1, "options": {"temperature": 0.0, "num_predict": 3}}).encode("utf-8")
+    req = urllib.request.Request(OLLAMA_URL, data=payload, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=COMPLETENESS_LLM_TIMEOUT_S + 0.5) as resp:
+        body = json.loads(resp.read().decode("utf-8"))
+    return "complete" if (body.get("response") or "").strip().upper().startswith("DONE") else None
+
+
+async def _llm_completeness(text: str, lang: str) -> str | None:
+    if not _flag_on("COMPLETENESS_LLM", "/workspace/.completeness_llm_off") or not (text or "").strip():
+        return None
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_ollama_finished_sync, text, lang), timeout=COMPLETENESS_LLM_TIMEOUT_S)
+    except Exception:  # noqa: BLE001 - advisory: no verdict keeps the rules' wait
+        return None
+
+
+async def _preempt_intent(session: CallSession, text: str, lang: str) -> None:
+    """Start the intent model on the speculative transcript now, during the silence wait. The result is parked on the session under the exact cache key the real turn will compute; the real turn
+    (_resolve_intent_uncached) uses it only if its own key is identical. Nothing is spoken or changed here."""
+    try:
+        if not _flag_on("PREEMPTIVE_INTENT", "/workspace/.preemptive_off") or _busy_for_speculation() or _fast_path is None:
+            return
+        text = (text or "").strip()
+        if len(text.split()) < 2 or _clearly_garbled(session, text, lang):
+            return
+        text = await _normalise_spelled(text)
+        text_lang = language_of_script(text, lang)
+        gap = session.turn_count - session.last_enquiry_turn if session.last_enquiry_entities else None
+        topic = recent_unique(session.last_enquiry_entities, "test_name", gap)
+        if await asyncio.to_thread(_fast_path.resolve, text, text_lang, topic) is not None:
+            return  # the quick path answers this sentence without the model
+        key = text if text_lang == "bn" else f"[{text_lang}] {text}"
+        _sig = dialogue_state.signature(_dialogue_snapshot(session, lang))
+        if _sig:
+            key = f"{key} [[{_sig}]]"
+        ctx = dialogue_state.render(_dialogue_snapshot(session, lang))
+
+        async def run():
+            data, _diag = await asyncio.wait_for(asyncio.to_thread(extract_intent, text, 2, text_lang, INTENT_BUDGET_S, ctx), timeout=INTENT_BUDGET_S + 1.0)
+            return data
+
+        task = asyncio.ensure_future(run())
+        task.add_done_callback(lambda f: f.cancelled() or f.exception())
+        session.preempt = {"key": key, "task": task}
+    except Exception as e:  # noqa: BLE001 - a preparation, never a failure
+        logger.info("[%s] preemptive intent skipped: %s", session.call_id, e)
+
+
 async def _speculative_completeness(session: CallSession, speech_end_abs: float) -> str | None:
     """KCD-048: transcribe what has been said so far, in the call's current
     language only (no LID, no router state touched), and say whether it reads as
@@ -8679,6 +8849,12 @@ async def _speculative_completeness(session: CallSession, speech_end_abs: float)
         # an emergency phrase in what has been said so far ends the wait at once: the turn is treated as
         # finished so the notice is not delayed by a silence timer (agent/emergency.py)
         verdict = "complete" if detect_emergency(asr.text) else ("certain" if is_certain(asr.text, session.lang) else classify_completeness(asr.text, session.lang))
+        if verdict == "unknown" and not _busy_for_speculation():
+            if await _llm_completeness(asr.text, session.lang) == "complete":
+                verdict = "complete"  # the rules could not tell; the model says the sentence is finished (this only ever shortens the wait)
+        if verdict != "certain":
+            _pre = asyncio.ensure_future(_preempt_intent(session, asr.text, session.lang))
+            _pre.add_done_callback(lambda f: f.cancelled() or f.exception())
     except Exception as e:  # noqa: BLE001 - speculation is advisory
         logger.info("[%s] speculative transcription unavailable: %s", session.call_id, e)
         return None
@@ -8704,6 +8880,7 @@ async def _decide_turn(session: CallSession, tail, sr: int):
         cfg = never_shorter_than(cfg, _turn_detector.config, ENDPOINT_INCOMPLETE_S)
         # ...and then the two quick cases (see ENDPOINT_CERTAIN_S): they only apply once a speculative transcript has said the words read as a finished answer
         cfg = dataclasses.replace(cfg, complete_confirm_s=ENDPOINT_COMPLETE_S, certain_confirm_s=ENDPOINT_CERTAIN_S)
+    cfg, _question_kind = _apply_question_waits(session, cfg)  # owner, 2026-11-03: the wait depends on what was just asked
     if spans and not session.commit_checked and session.last_commit_end_abs is not None:
         # speech resumed after the last turn was cut: was that cut too early for THIS caller?
         resumed_after = max(0.0, float(spans[0]["start"]) - session.last_confirm_s)
@@ -8724,6 +8901,10 @@ async def _decide_turn(session: CallSession, tail, sr: int):
         if verdict is not None:
             decision = decide_turn_end(spans, duration_s, cfg, completeness=verdict, semantic=True)
     if decision.utterance_end_s is not None:
+        logger.info(
+            "[%s] endpoint: question=%s verdict=%s waited %.2fs (needed %.2fs) -- resumed-after-cut is logged by the pause profile",
+            session.call_id, _question_kind or "-", session.spec_verdict or "-", float(decision.trailing_silence_s or 0.0), float(decision.confirm_s or 0.0),
+        )
         session.pause.observe_utterance(spans, upto_s=decision.utterance_end_s)
         session.last_confirm_s = decision.confirm_s or cfg.silence_confirm_s
         session.last_commit_end_abs = session.processed_until_s + float(decision.utterance_end_s)
