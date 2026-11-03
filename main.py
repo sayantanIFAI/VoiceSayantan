@@ -1627,6 +1627,10 @@ async def _speak(session: CallSession, text: str, lang: str | None = None, fallb
     # sourav, 2026-10-24 (owner): a date is SAID by what is nearest in time -- "18th" -> "আঠারো তারিখ" (same month: no month, no date format); "2 September" from October ->
     # "সামনের মাসের দুই তারিখ"; further away: the month's name (agent/date_phrase.py). Every ISO date in a reply is reworded here, once, just before speaking.
     text = date_phrase.speak_dates(text, lang, slot_proposal.clinic_now().date())
+    # Owner, 2026-11-03: the log held what the caller said ("heard") but not what the agent said back, so a call could not be read as a conversation. This is the one
+    # place every reply passes (the text frame below and the audio after it), and the line is the exact final text. A reply cut short by a barge-in is logged in full:
+    # it was sent in full, and the caller heard part of it. The call dashboard reads this line; nothing else depends on it.
+    logger.info("[%s] said (%s%s): %r", session.call_id, lang, ", filler" if session.speaking_filler else "", text)
     await session.send_json("AI", text)
     if not session.speaking_filler:
         session.last_spoken = text  # the caller may ask about a word of it ("চুয়াল্লিশ বললেন?")

@@ -7,7 +7,8 @@ a timeout, the call score. Every other line is ignored, so a change to some othe
 Three more lines are read for the speed view: `turn timing:` (where the time from the start of a turn to the first audio went, stage by stage),
 `ASR timings:` (how long each recogniser took) and the few lines that say which tier answered a turn (the intent cache, the fast path, a rule).
 
-The agent does NOT log what it says back, so the AI's side of a conversation is not in this file and is not shown anywhere in the dashboard.
+Since 2026-11-03 the agent also logs what it says back (`said (<language>[, filler]): '<text>'`, one line per reply, written where the reply is sent), so a call
+reads as a conversation on one clock. Calls made before that have the caller's side only.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from collections.abc import Callable
 
 _HEADER = re.compile(r"^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}),\d{3} (\w+) ([\w.\-]+): (.*)$")
 _CALL = re.compile(r"^\[([0-9A-Za-z_-]{4,40})\] (.*)$")
+_SAID = re.compile(r"^said \(([\w?]+)(, filler)?\): (.*)$")
 _HEARD = re.compile(r"^heard \(([\w?]+), ([\w?]+), agreement ([0-9.]+)\): (.*)$")
 _SIMPLE: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^call started"), "start"),
@@ -85,6 +87,13 @@ def parse_line(line: str, keep_text: bool = True) -> LogEvent | None:
         if keep_text:
             data["text"] = _unrepr(text)
         return LogEvent(day, time_, call_id, "heard", data)
+    said = _SAID.match(body)
+    if said is not None:
+        lang, filler, text = said.groups()
+        data = {"lang": lang, "filler": bool(filler)}
+        if keep_text:
+            data["text"] = _unrepr(text)
+        return LogEvent(day, time_, call_id, "said", data)
     timing = _TIMING.match(body)
     if timing is not None:
         stages = {name: int(ms) for name, ms in _STAGE.findall(timing.group(1))}

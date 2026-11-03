@@ -38,6 +38,7 @@ tr.call{cursor:pointer}tr.call:hover td,tr.sel td{background:var(--soft)}
 .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-top:12px}
 .tl{list-style:none;margin:0;padding:0}.tl li{padding:6px 0;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:flex-start}
 .tl .t{color:var(--muted);font-size:12px;min-width:56px}
+.who{font-size:11px;padding:1px 7px;border-radius:8px;min-width:50px;text-align:center;align-self:flex-start;margin-top:2px}.who.caller{background:var(--soft);color:var(--muted)}.who.ai{background:var(--accent-bg);color:var(--accent)}li.ai{background:var(--soft);border-radius:6px;padding-left:6px;padding-right:6px}
 .agree{display:inline-block;width:46px;height:6px;background:var(--soft);border-radius:3px;vertical-align:middle;margin-right:4px;overflow:hidden}.agree i{display:block;height:100%}
 .said{font-size:15px}
 .empty{color:var(--muted);padding:14px 0}
@@ -91,7 +92,7 @@ th.num,td.num{text-align:right}.sp-src{font-size:13px;font-weight:500;margin:10p
 
 <div class="card"><h2>What this screen cannot show</h2>
   <ul class="note" style="margin:0;padding-left:18px">
-    <li>The AI's own words. The agent does not write them to any file, so a call shows what the caller said and what the agent recorded, not the replies.</li>
+    <li>The AI's words for calls made before 2026-11-03. The agent now writes each reply to its log (<code>said (...)</code>), and the dashboard shows both sides in time order; earlier calls have the caller's side only.</li>
     <li>"Did you mean ...?" and "which one, A or B?" questions. They are not recorded, so clarifications here are the re-asks only.</li>
     <li>Whether the AI offered a booking. It is not recorded, so "booking after an enquiry" counts calls where an enquiry came first and a booking followed.</li>
     <li>A direct "that is wrong" from the caller. There is no detector; the panel counts visible disagreement (a correction at the read-back, a complaint, a request for a person).</li>
@@ -176,7 +177,8 @@ function drawCalls(list){
 function agreeBar(a){var w=el("span","agree"),i=el("i");i.style.width=Math.round(a*100)+"%";i.style.background=a<0.5?"var(--bad)":a<0.8?"var(--warn)":"var(--ok)";w.appendChild(i);return w}
 function logRow(ev){
   var li=el("li");li.appendChild(el("span","t",(ev.time||"")));var body=el("div");
-  if(ev.kind==="heard"){var s=el("div","said",ev.text===undefined?"(text not kept)":ev.text);body.appendChild(s);var m=el("div","note");m.appendChild(agreeBar(ev.agreement));m.appendChild(document.createTextNode("heard as "+ev.lang+", "+ev.decoder+", agreement "+ev.agreement.toFixed(2)));if(ev.agreement<0.5){m.appendChild(document.createTextNode(" "));m.appendChild(el("span","pill p-bad","low agreement"))}body.appendChild(m)}
+  if(ev.kind==="said"){li.className="ai";li.appendChild(el("span","who ai","AI"));body.appendChild(el("div","said",ev.text===undefined?"(text not kept)":ev.text));if(ev.filler)body.appendChild(el("span","pill p-gy","please-hold filler"));li.appendChild(body);return li}
+  if(ev.kind==="heard"){li.appendChild(el("span","who caller","Caller"));var s=el("div","said",ev.text===undefined?"(text not kept)":ev.text);body.appendChild(s);var m=el("div","note");m.appendChild(agreeBar(ev.agreement));m.appendChild(document.createTextNode("heard as "+ev.lang+", "+ev.decoder+", agreement "+ev.agreement.toFixed(2)));if(ev.agreement<0.5){m.appendChild(document.createTextNode(" "));m.appendChild(el("span","pill p-bad","low agreement"))}body.appendChild(m)}
   else{var t={start:"Call started",end:"Call ended",empty:"Nothing was recognised",emergency:"Possible emergency heard",abuse:"Abusive turn "+(ev.value||""),handoff:"Handed to a person: "+lab("reason",ev.value),audio_overrun:"Audio could not keep up",idle_timeout:"Idle timeout, call closed",silence:"Caller was silent",interrupted:"Caller talked over a reply",lang_mismatch:"A reply came out in the wrong language",unspeakable:"A reply could not be spoken",score:"Call score "+ev.score+" ("+ev.band+")"}[ev.kind]||ev.kind;
     var bad=["empty","emergency","abuse","handoff","audio_overrun","idle_timeout","lang_mismatch","unspeakable"].indexOf(ev.kind)>=0;body.appendChild(el("span","pill "+(bad?"p-warn":"p-gy"),t))}
   li.appendChild(body);return li}
@@ -203,15 +205,17 @@ function openCall(day,id){
     (l.wrong_signals||[]).forEach(function(w){head.appendChild(el("span","pill p-bad",lab("wrong",w)))});
     host.appendChild(head);
     var cols=el("div","cols"),a=el("div"),b=el("div");
-    a.appendChild(el("h2","","What the caller said (from the agent log)"));
+    a.appendChild(el("h2","","The conversation (from the agent log): the caller and the AI, in time order"));
     var ul=el("ul","tl");
     if(!d.log.length)ul.appendChild(el("li","empty",d.log_day===""?"No log lines were found for this call (the log may have been cleared by a restart, or the transcripts are older than the retention period).":""));
-    d.log.forEach(function(ev){if(ev.kind==="start"||ev.kind==="end"||ev.kind==="score")return;ul.appendChild(logRow(ev))});
+    var hasAI=false;
+    d.log.forEach(function(ev){if(ev.kind==="start"||ev.kind==="end"||ev.kind==="score")return;if(ev.kind==="said")hasAI=true;ul.appendChild(logRow(ev))});
     a.appendChild(ul);
     b.appendChild(el("h2","","What the agent recorded (from the call journal)"));
     var ul2=el("ul","tl");(s.timeline||[]).forEach(function(e){var li=el("li");li.appendChild(el("span","t","#"+e.seq));li.appendChild(el("div","",evText(e)));ul2.appendChild(li)});b.appendChild(ul2);
     cols.appendChild(a);cols.appendChild(b);host.appendChild(cols);
-    host.appendChild(el("div","note","The AI's replies are not in the log, so they are not shown. The two lists have different clocks and are not interleaved."));
+    var heard=d.log.some(function(ev){return ev.kind==="heard"});
+    host.appendChild(el("div","note",(heard&&!hasAI?"This call has no AI lines: the agent started writing its replies to the log on 2026-11-03, so earlier calls show the caller's side only. ":"")+"The right-hand list is what the agent recorded for the call; those events carry no time, so they are kept apart from the conversation, which has one clock."));
   }).catch(function(){clear(host);host.appendChild(el("div","empty","Could not load this call."))})}
 
 function drawFilters(){var f=$("filters");clear(f);FILTERS.forEach(function(x){var b=el("button",state.tag===x[0]?"on":"",x[1]);b.onclick=function(){state.tag=x[0];drawFilters();loadCalls()};f.appendChild(b)})}

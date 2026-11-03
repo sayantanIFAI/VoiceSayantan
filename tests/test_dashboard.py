@@ -389,3 +389,45 @@ def test_archived_logs_are_read_through_a_glob_pattern(tmp_path):
     c = store.list_calls(2, "", "transferred", 1, clinic_today())[0]
     assert any(t["kind"] == "heard" for t in store.call_detail(c["day"], c["call_id"])["log"])
     assert ingest.ingest_once(cfg, store)["log_events"] == 0  # an archived log is read once
+
+
+# ------------------------------------------------------------------ what the agent says back
+
+
+def test_a_said_line_gives_the_language_the_text_and_whether_it_was_a_filler():
+    base = "2026-11-03 10:15:04,120 INFO main_pcm: [4f2a9c01] "
+    ev = logparse.parse_line(base + "said (bn): 'সিবিসি টেস্টের দাম চারশো টাকা।'")
+    assert (ev.kind, ev.data) == ("said", {"lang": "bn", "filler": False, "text": "সিবিসি টেস্টের দাম চারশো টাকা।"})
+    ev = logparse.parse_line(base + "said (en, filler): 'Please hold.'")
+    assert ev.data == {"lang": "en", "filler": True, "text": "Please hold."}
+    assert "text" not in logparse.parse_line(base + "said (en): 'secret'", keep_text=False).data
+
+
+def test_an_opened_call_shows_both_sides_in_time_order(tmp_path):
+    cfg = _cfg(tmp_path)
+    store = Store(cfg.db_path)
+    ingest.ingest_once(cfg, store)
+    c = store.list_calls(2, "", "transferred", 1, clinic_today())[0]
+    log = [t for t in store.call_detail(c["day"], c["call_id"])["log"] if t["kind"] in ("heard", "said")]
+    kinds = [t["kind"] for t in log]
+    assert "heard" in kinds and "said" in kinds
+    assert kinds[0] == "heard"  # the caller speaks first in a made-up call, and the first reply follows it
+    assert [t["time"] for t in log] == sorted(
+        t["time"] for t in log
+    )  # one clock: a reply never comes before the words it answers
+    assert all(t["text"] for t in log)
+
+
+def test_no_reply_text_is_stored_when_transcripts_are_switched_off(tmp_path):
+    cfg = _cfg(tmp_path, keep_transcripts=False)
+    store = Store(cfg.db_path)
+    ingest.ingest_once(cfg, store)
+    c = store.list_calls(2, "", "transferred", 1, clinic_today())[0]
+    log = store.call_detail(c["day"], c["call_id"])["log"]
+    assert any(t["kind"] == "said" for t in log) and all("text" not in t for t in log)
+
+
+def test_the_page_shows_the_ai_side_and_no_longer_says_it_is_missing():
+    page = open(os.path.join(REPO_ROOT, "dashboard", "static", "index.html"), encoding="utf-8").read()
+    assert 'ev.kind==="said"' in page and '"who ai"' in page and "in time order" in page
+    assert "replies are not in the log" not in page and "does not write them to any file" not in page

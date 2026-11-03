@@ -92,7 +92,7 @@ store the recogniser's agreement and the markers but never the words).
 
 ## What it cannot show (and why)
 
-* **The AI's own words.** The agent does not write them to any file. A call shows what the caller said and what the agent recorded, as two lists.
+* **The AI's words for calls made before 2026-11-03.** The agent now writes each reply to its log (`said (...)`, one line in `_speak`), and a call shows both sides in time order; earlier calls show the caller's side only. The events the agent recorded (from the journal) carry no clock, so they stay a separate list.
 * **"Did you mean ...?" and "which one, A or B?" questions.** Not recorded, so the clarification count is the re-asks only.
 * **A booking offered by the AI.** Not recorded. "An enquiry came first, then a booking" is the nearest count; it includes bookings the caller would
   have made anyway.

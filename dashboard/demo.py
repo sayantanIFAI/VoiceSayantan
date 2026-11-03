@@ -29,6 +29,21 @@ TEXTS = {
 }
 
 
+REPLIES = {  # made-up replies, one list per kind of caller turn
+    "price": ["সিবিসি টেস্টের দাম চারশো টাকা। আর কিছু জানতে চান?", "The uric acid test costs one hundred and fifty rupees."],
+    "sitting": ["ডাক্তার বিশ্বজিৎ সেন কাল সকাল দশটা থেকে বসবেন।", "डॉक्टर आज शाम चार बजे से बैठेंगे।"],
+    "book": ["কোন তারিখে অ্যাপয়েন্টমেন্ট নিতে চান?", "Which day would you like the appointment?"],
+    "detail": ["ধন্যবাদ। আপনার ফোন নম্বরটা বলবেন?", "ঠিক আছে। রোগীর নাম কী?"],
+    "yes": ["আপনার বুকিং নিশ্চিত হয়েছে।"],
+    "no": ["ঠিক আছে, কী পরিবর্তন করব?"],
+    "person": ["আমি আপনাকে একজন সহকারীর সাথে যুক্ত করছি।"],
+    "result": ["রিপোর্টের মানে ডাক্তারই বুঝিয়ে দেবেন; আমি আপনাকে একজনের সাথে যুক্ত করছি।"],
+    "noisy": ["দুঃখিত, লাইনে শব্দ আছে। আরেকবার বলবেন?"],
+    "abuse": ["আমি আপনাকে সাহায্য করতে চাই। অনুগ্রহ করে ভদ্রভাবে কথা বলুন।"],
+}
+FILLER = "একটু অপেক্ষা করুন।"
+
+
 class _Maker:
     def __init__(self, seed: int = 7):
         self.rng = random.Random(seed)
@@ -93,13 +108,10 @@ def _scenario(kind: str, m: _Maker) -> tuple[list, list[tuple[str, float, dict]]
     _ev(ev, "language", language=lang)
 
     def say(key: str, agree: float | None = None) -> None:
-        turns.append(
-            (
-                r.choice(TEXTS[key]),
-                agree if agree is not None else round(r.uniform(0.82, 1.0), 2),
-                _turn_timing(r, lang),
-            )
-        )
+        timing = _turn_timing(r, lang)
+        timing["reply"] = r.choice(REPLIES[key])  # what the agent said back, as it logs it
+        timing["filler"] = timing["tier"] == "model" and r.random() < 0.3  # a "please hold" before a slow answer
+        turns.append((r.choice(TEXTS[key]), agree if agree is not None else round(r.uniform(0.82, 1.0), 2), timing))
 
     sig = {
         "turns": 3,
@@ -249,6 +261,11 @@ def write_demo(root: str, per_day: int = 0, seed: int = 7) -> Config:
             for i, (text, agree, tm) in enumerate(turns):
                 lang = next((e["payload"]["language"] for e in events if e["kind"] == "language"), "bn")
                 t0 = 5 + i * 9
+                # the order the agent logs a turn in: the recognisers' times, what was heard, the tier marker, what was said, the turn's timing
+                log_lines.append(
+                    f"{_stamp(day, hh, mm, t0)} INFO main_pcm: [{cid}] ASR timings: "
+                    + " | ".join(f"{k} {v} ms" for k, v in tm["engines"].items())
+                )
                 log_lines.append(
                     f"{_stamp(day, hh, mm, t0)} INFO main_pcm: [{cid}] heard ({lang}, rnnt, agreement {agree:.2f}): {text!r}"
                 )
@@ -260,10 +277,11 @@ def write_demo(root: str, per_day: int = 0, seed: int = 7) -> Config:
                 }.get(tm["tier"])
                 if marker:
                     log_lines.append(f"{_stamp(day, hh, mm, t0 + 1)} INFO main_pcm: [{cid}] {marker}")
-                log_lines.append(
-                    f"{_stamp(day, hh, mm, t0 + 2)} INFO main_pcm: [{cid}] ASR timings: "
-                    + " | ".join(f"{k} {v} ms" for k, v in tm["engines"].items())
-                )
+                if tm.get("filler"):
+                    log_lines.append(
+                        f"{_stamp(day, hh, mm, t0 + 1)} INFO main_pcm: [{cid}] said ({lang}, filler): {FILLER!r}"
+                    )
+                log_lines.append(f"{_stamp(day, hh, mm, t0 + 2)} INFO main_pcm: [{cid}] said ({lang}): {tm['reply']!r}")
                 parts = " | ".join(f"{k} {v} ms" for k, v in tm["stages"].items())
                 log_lines.append(
                     f"{_stamp(day, hh, mm, t0 + 3)} INFO main_pcm: [{cid}] turn timing: {parts} | total {tm['total']} ms"
