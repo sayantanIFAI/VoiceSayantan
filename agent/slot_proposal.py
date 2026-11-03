@@ -111,9 +111,9 @@ def none_left(lang: str) -> str:
 
 _WHEN = {
     # the day after tomorrow: the DATE first, then the word ("পরশু" / "परसों"), owner 2026-10-17
-    "bn": {"today": "আজই", "tomorrow": "আগামীকাল, {date} তারিখে", "day_after": "{date} তারিখে, পরশু", "other": "{date} তারিখে"},
-    "hi": {"today": "आज ही", "tomorrow": "कल, {date} तारीख को", "day_after": "{date} को, परसों", "other": "{date} को"},
-    "en": {"today": "today", "tomorrow": "tomorrow, {date}", "day_after": "on {date}, the day after tomorrow", "other": "on {date}"},
+    "bn": {"today": "আজই", "tomorrow": "আগামীকাল, {date} তারিখে", "day_after": "{date} তারিখে, পরশু", "other": "{date} তারিখে {wd}"},
+    "hi": {"today": "आज ही", "tomorrow": "कल, {date} तारीख को", "day_after": "{date} को, परसों", "other": "{date} को {wd}"},
+    "en": {"today": "today", "tomorrow": "tomorrow, {date}", "day_after": "on {date}, the day after tomorrow", "other": "on {wd} {date}"},
 }
 
 
@@ -132,12 +132,28 @@ def asked_day_phrase(date_iso: str, lang: str, now: datetime.datetime | None = N
     return when_phrase(date_iso, lang, now)
 
 
+_WEEKDAY = {
+    "bn": ("সোমবার", "মঙ্গলবার", "বুধবার", "বৃহস্পতিবার", "শুক্রবার", "শনিবার", "রবিবার"),
+    "hi": ("सोमवार", "मंगलवार", "बुधवार", "गुरुवार", "शुक्रवार", "शनिवार", "रविवार"),
+    "en": ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"),
+}
+
+
+def weekday_name(date_iso: str, lang: str) -> str:
+    """Owner, 2026-11-03: a date is said with its weekday ("ছয় তারিখে শুক্রবার", "সাত তারিখে শনিবার"). "" when the date cannot be read."""
+    try:
+        d = datetime.date.fromisoformat(date_iso)
+    except (TypeError, ValueError):
+        return ""
+    return _WEEKDAY.get(lang, _WEEKDAY["en"])[d.weekday()]
+
+
 def when_phrase(date_iso: str | None, lang: str, now: datetime.datetime | None = None) -> str:
     """The day as a caller says it: "আজই" / "আগামীকাল, <date> তারিখে" / "<date> তারিখে" (Hindi "आज ही" / "कल, <date> तारीख को", English "today" / "tomorrow, <date>")."""
     lang = lang if lang in _WHEN else "en"
     if not date_iso:
         return _WHEN[lang]["today"]
-    return _WHEN[lang][day_kind(date_iso, now)].format(date=date_iso)
+    return _WHEN[lang][day_kind(date_iso, now)].format(date=date_iso, wd=weekday_name(date_iso, lang))
 
 
 _RECONFIRM = {

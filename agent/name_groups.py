@@ -105,6 +105,24 @@ def which_offered(text: str, infos: list[dict]) -> list[dict]:
     return hits if best >= 2 else []
 
 
+def shared_reply(infos: list[dict], said: str, lang: str, label=None) -> str:
+    """Owner, 2026-11-03 ("ডাক্তার রায় বসে"): a name that more than one doctor carries -> "রায় নামে আছেন A বিভাগের ডাঃ X এবং B বিভাগের ডাঃ Y। কার কথা বলছেন?" -- every one, with his department."""
+    def _named(i: dict) -> str:
+        n = spoken_name(i, lang)
+        dept = label(i.get("department") or "") if label and i.get("department") else ""
+        if not dept:
+            return n
+        return {"bn": f"{dept} বিভাগের {n}", "hi": f"{dept} विभाग के {n}", "en": f"{n} ({dept})"}.get(lang, n)
+
+    word = name_script.clean_query(said, lang) if lang in ("bn", "hi") else said
+    who = _join([_named(i) for i in infos[: MAX_PER_GROUP + 2]], lang)
+    return {
+        "bn": f"{word} নামে আছেন {who}। কার কথা বলছেন?",
+        "hi": f"{word} नाम के डॉक्टर हैं {who}। आप किसकी बात कर रहे हैं?",
+        "en": f"With the name {word}: {who}. Which one do you mean?",
+    }.get(lang, f"{word}: {who}")
+
+
 def reply(groups: dict, said_text: str, lang: str, label=None) -> str:
     """The spoken answer for `groups` (see build)."""
     def _named(i: dict) -> str:

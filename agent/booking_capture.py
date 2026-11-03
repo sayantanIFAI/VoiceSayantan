@@ -443,9 +443,9 @@ _AM = frozenset({"am", "a.m", "morning", "সকাল", "সকালে", "sok
 _PM = frozenset({"pm", "p.m", "afternoon", "evening", "night", "বিকেল", "বিকাল", "বিকেলে", "সন্ধ্যা", "সন্ধ্যে", "সন্ধে", "রাত", "রাতে", "bikel", "sondhe", "raat", "rat", "शाम", "रात", "sham"})  # fmt: skip
 _NOONISH = frozenset({"দুপুর", "দুপুরে", "dupur", "दोपहर", "dopahar", "noon"})  # "দুপুর ১১টা" is late morning; "দুপুর ২টা" is 2 pm
 # Real call 2026-10-18: "কালকেই" (tomorrow itself, with the emphatic ই) was not a day word: the model read it as YESTERDAY (the 17th) and the booking for the 19th became a lookup.
-_TOMORROW = frozenset({"tomorrow", "kal", "kaal", "কাল", "কালকে", "আগামীকাল", "আগামিকাল", "agamikal", "कल", "कलके", "কালকেই", "কালই", "আগামীকালই", "আগামিকালই", "কালকেরই", "कल ही", "कलही"})
-_DAY_AFTER = frozenset({"parso", "parson", "পরশু", "পরশুদিন", "porshu", "परसों", "परसो", "পরশুই", "পরশুদিনই"})
-_TODAY = frozenset({"today", "aaj", "aj", "আজ", "আজকে", "आज", "আজই", "আজকেই", "आजही"})
+_TOMORROW = frozenset({"tomorrow", "kal", "kaal", "কাল", "কালকে", "আগামীকাল", "আগামিকাল", "agamikal", "कल", "कलके", "কালকেই", "কালই", "আগামীকালই", "আগামিকালই", "কালকেরই", "कल ही", "कलही", "কালকেও", "কালও", "আগামীকালও", "আগামিকালও", "কালকেই", "कल भी", "कलभी"})  # owner, 2026-11-03: "কালকেও বুঝবে" ("tomorrow too") was read as no day, and answered for today
+_DAY_AFTER = frozenset({"parso", "parson", "পরশু", "পরশুদিন", "porshu", "परसों", "परसो", "পরশুই", "পরশুদিনই", "পরশুও", "পরশুদিনও", "परसों भी"})
+_TODAY = frozenset({"today", "aaj", "aj", "আজ", "আজকে", "आज", "আজই", "আজকেই", "आजही", "আজও", "আজকেও", "आज भी"})
 _FILLER = frozenset(
     {"at", "for", "around", "about", "by", "the", "time", "slot", "please", "okay", "ok", "yes", "haan", "han", "ji", "accha", "achha",
      "theek", "thik", "to", "me", "mein", "में", "ko", "को", "ke", "ka", "की", "के", "का", "liye", "लिए", "jonno", "জন্য", "সময়", "সময়ে",
@@ -1007,6 +1007,13 @@ def confirm_answer(text: str, lang: str) -> str | None:
     from agent.booking_flow import classify_yes_no
 
     answer = classify_yes_no(text, lang)
+    if answer == "no":
+        # Owner, 2026-11-03 ("tipan no ah", the recogniser's তিপ্পান্ন, was a refusal of the phone number): a bare English "no" in the MIDDLE of a sentence of three words or more is part of a word, not a refusal
+        ws = _words(text)
+        if len(ws) >= 3 and "no" in ws[1:-1]:
+            rest = [w for i, w in enumerate(ws) if not (0 < i < len(ws) - 1 and w == "no")]
+            if classify_yes_no(" ".join(rest), lang) is None:
+                return None
     if answer is None and any(w in _HUMS for w in _words(text)):
         return "yes"
     if answer is None:

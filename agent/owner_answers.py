@@ -116,7 +116,7 @@ def _mentions_sonoscan(t: str) -> bool:
             if width > 1 and any(len(_sound(w)) > 3 for w in tokens[i : i + width]):
                 continue  # a long word in the middle is a different word, not a piece of the name
             # ল and ন are folded together: "শোনো স্কাল" for "সোনোস্ক্যান" (owner, 2026-10-30, "ha eta Sonoscan") is the same name heard with a final l
-            snd = _sound("".join(tokens[i : i + width])).replace("L", "N")
+            snd = _sound("".join(tokens[i : i + width])).replace("L", "N").replace("R", "N")  # owner, 2026-11-03: "শুনস্কার" is the name heard with a final r (r and l are folded into n)
             if 4 <= len(snd) <= 6 and difflib.SequenceMatcher(None, snd, _SONOSCAN_SOUND).ratio() >= 0.85:
                 return True
     return False
@@ -135,6 +135,9 @@ def branch_identity(text: str, lang: str) -> str | None:
     if not t or len(t.split()) > 10 or not (_has(t, _SONOSCAN) or _mentions_sonoscan(t)):
         return None
     place = _place_in(t)
+    _here = _place_in(_norm(CLINIC_BRANCH)) or _norm(CLINIC_BRANCH)
+    if place is not None and place != _here and _here in PLACES and _has(t, PLACES[_here][3]):
+        place = _here  # "মালদা সোনোস্ক্যান না কলকাতা?": the branch this agent IS is named too -- answered yes (owner, 2026-11-03)
     # "আপনারা কলকাতা সোনোস্ক্যান", "ETA সোনোস্ক্যান", "সোন স্ক্যান", "আপনারা কি সোনু স্কান বলছেন": the clinic's name in a short sentence IS the question "is this Sonoscan?" -- a cue word
     # is only needed when the sentence is long enough to be about something else; any word of another request rules it out.
     if _has(t, _NOT_IDENTITY) and place is None:
