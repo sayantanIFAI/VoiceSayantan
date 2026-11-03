@@ -4681,6 +4681,36 @@ async def _answer_clinic_open(session: CallSession, text: str, lang: str) -> boo
     return False
 
 
+_ANOTHER_DOCTOR = re.compile(
+    r"(?:আরেকটা|আরেকটি|আরেকজন|আরেক\s*জন|আর\s*একজন|আর\s*একটা|অন্যটা|অন্যজন|অন্য)(?:\s+(?:আরেকটা|আরেকজন|একটা|একজন))?\s*(?:ডাক্তার|ডক্টর|ডাক্টার)"
+    r"|(?:दूसरा|दूसरे|दूसरी|और\s*कोई|अन्य)\s*(?:डॉक्टर|डाक्टर)"
+    r"|\b(?:another|other|different)\s+doctor\b|\bsome\s*one\s+else\b",
+    re.I,
+)
+
+
+async def _answer_another_doctor(session: CallSession, text: str, lang: str) -> bool:
+    """Owner, 2026-11-04 ("আরেকটা ডাক্তার" / "অন্য ডাক্তার" / "অন্য আরেকটা ডাক্তার" was answered "no doctor named আরেকটা ডাক্তার"): it means ANOTHER doctor -- the one in the booking is dropped (with his day and
+    time) and the caller is asked which doctor. A sentence that names a doctor is not this."""
+    if not text or len(text.split()) > 9 or not _ANOTHER_DOCTOR.search(text) or _text_names_a_doctor(text, lang):
+        return False
+    b = session.booking
+    if b is not None:
+        if b.stage != "collecting" or b.phone_buffer:
+            return False
+        for key in ("doctor_name", "date", "time_slot", "_offered_date", "_conflict_checked"):
+            b.slots.pop(key, None)
+        b.asked_fields.add("doctor_name")
+    session.subject_doctor = None
+    session.name_pick = None
+    ask = {
+        "bn": "ঠিক আছে। কোন ডাক্তারের অ্যাপয়েন্টমেন্ট করবেন?",
+        "hi": "ठीक है। किस डॉक्टर का अपॉइंटमेंट करना है?",
+    }.get(lang, "Okay. Which doctor would you like to book with?")
+    await _speak(session, ask, lang)
+    return True
+
+
 async def _answer_pace_request(session: CallSession, text: str, lang: str) -> bool:
     """The caller asks for a slower pace (agent/pace_request.py). Every sentence after this is spoken slower (each further request slows it more), and the last line is said again at the new pace."""
     if not pace_request.asks_slower(text):
@@ -7028,6 +7058,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             return  # owner, 2026-11-03: "কালকে কি খোলা থাকবে" about the clinic is answered from the hours, never for a doctor
         if await _answer_pace_request(session, text, lang):
             return  # owner, 2026-11-03: "স্লো বলুন" / "ধীরে বলুন" / "থেমে থেমে বলুন": slower from now on, and the last line again
+        if await _answer_another_doctor(session, text, lang):
+            return  # owner, 2026-11-04: "আরেকটা ডাক্তার" / "অন্য ডাক্তার": another doctor -- asked which one
         if await _answer_bare_repeat(session, text, lang):
             return  # the caller said back a phrase of our last reply: confirmed (owner, 2026-11-01)
         if await _answer_these_doctors_dept(session, text, lang):

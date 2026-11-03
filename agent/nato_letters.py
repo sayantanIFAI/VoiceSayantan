@@ -80,14 +80,53 @@ def nato_run(text: str) -> str | None:
     return "".join(best).upper() if len(best) >= 3 else None
 
 
+# A letter name's vowel sign when the recogniser joined two letter names into one word: "আরিজেডে" = আর + (ই) + জেড + (এ) = R E Z A
+_JOINED_SIGN = {"ি": "e", "ী": "e", "ে": "a", "ো": "o"}
+_NAMES_LONGEST_FIRST: list[str] = []
+
+
+def split_joined(tok: str) -> str | None:
+    """Owner, 2026-11-04 ("রেজাউল আরিজেডে ইউএল" -- the name and its spelling said together, the letter names run into words by the recogniser): a Bengali / Hindi word that is wholly made of
+    letter names ("ইউএল" = U L, "আরিজেডে" = R E Z A) -> its lower-case letters; None when any part of it is not a letter name, or it is under two letters."""
+    if tok.isascii():
+        return None
+    if not _NAMES_LONGEST_FIRST:
+        _NAMES_LONGEST_FIRST.extend(sorted((k for k in spelled_letters._LETTER if not k.isascii()), key=len, reverse=True))  # noqa: SLF001
+    t = _norm(tok).strip(".,;:!?")
+
+    def go(i: int) -> str | None:
+        if i == len(t):
+            return ""
+        for k in _NAMES_LONGEST_FIRST:
+            if t.startswith(k, i):
+                rest = go(i + len(k))
+                if rest is not None:
+                    return spelled_letters._LETTER[k] + rest  # noqa: SLF001
+        sign = _JOINED_SIGN.get(t[i]) if i > 0 else None
+        if sign:
+            rest = go(i + 1)
+            if rest is not None:
+                return sign + rest
+        return None
+
+    out = go(0)
+    return out if out and len(out) >= 2 else None
+
+
 def spelled_run(text: str, min_len: int = 3) -> str | None:
-    """A run of single letters ("S A N", "s a n") of at least `min_len` -> "SAN"; the longest run. Letter names in Bengali / Hindi script count."""
+    """A run of single letters ("S A N", "s a n") of at least `min_len` -> "SAN"; the longest run. Letter names in Bengali / Hindi script count, also several joined into one word."""
     best = ""
     cur = ""
     for tok in _TOKEN.findall(_norm(text)):
         lt = _letter(tok)
         if lt and (len(tok) == 1 or not tok.isascii()):
             cur += lt
+            if len(cur) > len(best):
+                best = cur
+            continue
+        joined = split_joined(tok)
+        if joined:
+            cur += joined
             if len(cur) > len(best):
                 best = cur
         else:

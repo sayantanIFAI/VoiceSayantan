@@ -12,11 +12,13 @@ nothing from here.
 
 from __future__ import annotations
 
+import difflib
 import re
 import time
 
 import gazetteer as gz
 import geo_data
+import wb_police_data
 from models import GeoDistrict, GeoPlace, GeoPoliceStation, GeoSubdivisionBlock
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -33,6 +35,10 @@ GEO_TTL_S = 30.0
 # A sound-alike is trusted only above this. REASONED, NOT MEASURED -- from a probe over this table: real misspellings ("shamppukur" 0.90, "jangipore" 0.89, "nu market"
 # 0.89, "kasbaa" 0.80) scored 0.79-0.90, while words that are no place here ("amar bari", "behala", "12 baker street") scored 0.57-0.70. Recalibrate on real calls.
 SOUND_CONFIDENT = 0.78
+# Owner, 2026-11-04 ("পাটুলি" was stored as "থানা চুঁচুড়া"): the sound score (0.78 and up) is the same ~0.85 for any form that shares a consonant skeleton, however differently it is
+# spelled, so it says nothing about a wrong guess. A sound-alike is trusted only when the characters agree too: the matched form, in the caller's own script, must be at least this
+# similar. Across scripts there is nothing to compare, so a cross-script sound-alike is a candidate only, never a settled place.
+SOUND_SPELLING_MIN = 0.70
 _cache: dict[tuple, tuple[float, tuple, gz.Gazetteer, dict]] = {}
 
 
@@ -84,9 +90,51 @@ def seed_geo(db: Session) -> dict:
                 )
             )
             added["places"] += 1
+    db.flush()
+    added["police_stations"] += seed_police_lists(db, districts, stations)
     db.commit()
     invalidate()
     return added
+
+
+def _station_key(name: str) -> str:
+    """The comparison key of a station name: lower case, no "PS", no punctuation or spaces ("Dum Dum PS" == "Dumdum")."""
+    return re.sub(r"[^a-z0-9]", "", short_name(name).lower())
+
+
+def seed_police_lists(db: Session, districts: dict | None = None, stations: dict | None = None) -> int:
+    """Owner, 2026-11-04 ("Place matcher lacks Patuli"): every police station of Kolkata, Howrah, Hooghly and the two 24 Parganas (clinic-api/wb_police_data.py). A station the
+    tables already hold (same English name) only gains the Bengali spelling and the other Latin spellings; a new one is inserted as WBP_<district>_<n>. Never deletes, never overwrites."""
+    districts = districts or {d.code: d for d in db.query(GeoDistrict).all()}
+    stations = stations or {s.code: s for s in db.query(GeoPoliceStation).all()}
+    by_key = {(s.district_id, _station_key(s.name)): s for s in stations.values()}
+    inserted = 0
+    for dist_code, rows in wb_police_data.STATIONS_BY_DISTRICT.items():
+        dist = districts.get(dist_code)
+        if dist is None:
+            continue
+        for n, (bn, en, other) in enumerate(rows, 1):
+            row = by_key.get((dist.id, _station_key(en)))
+            others = [o.strip() for o in other.split("/") if o.strip()]
+            if row is None:
+                code = f"WBP_{dist_code[-2:]}_{n:03d}"
+                row = stations.get(code)
+                if row is None:
+                    row = GeoPoliceStation(code=code, district_id=dist.id, name=f"{en} PS", aliases_en="|".join(others), aliases_bn=bn, aliases_hi="")
+                    db.add(row)
+                    stations[code] = row
+                    by_key[(dist.id, _station_key(en))] = row
+                    inserted += 1
+                    continue
+            have_bn = [a for a in (row.aliases_bn or "").split("|") if a]
+            if bn not in have_bn:
+                row.aliases_bn = "|".join(have_bn + [bn])
+            have_en = [a for a in (row.aliases_en or "").split("|") if a]
+            more = [o for o in others if o.lower() not in {a.lower() for a in have_en} and _station_key(o) != _station_key(row.name)]
+            if more:
+                row.aliases_en = "|".join(have_en + more)
+    db.flush()
+    return inserted
 
 
 # ------------------------------------------------------------------------------------------------------------------------- the gazetteer
@@ -198,6 +246,7 @@ def match_geo(db: Session, text: str, limit: int = 5) -> dict:
         }
     exact: dict[int, dict[str, float]] = {}
     fuzzy: dict[str, float] = {}
+    spelt: dict[str, float] = {}  # how alike the matched form is SPELLED to the phrase said, in the same script (0.0 across scripts)
     for n in (3, 2, 1):
         for i in range(0, len(words) - n + 1):
             phrase = " ".join(words[i : i + n])
@@ -206,6 +255,9 @@ def match_geo(db: Session, text: str, limit: int = 5) -> dict:
                     exact.setdefault(n, {})[s.canonical] = max(exact.get(n, {}).get(s.canonical, 0.0), s.score)
                 elif len(words) <= 3 and n == len(words):
                     fuzzy[s.canonical] = max(fuzzy.get(s.canonical, 0.0), s.score)
+                    q_norm, f_norm = gz.normalise(phrase, _DROP), gz.normalise(s.form, _DROP)
+                    ratio = difflib.SequenceMatcher(None, q_norm, f_norm).ratio() if gz.script_of(q_norm) == gz.script_of(f_norm) else 0.0
+                    spelt[s.canonical] = max(spelt.get(s.canonical, 0.0), ratio)
     if exact:
         best = exact[max(exact)]  # the longest exact phrase: "howrah maidan" beats "howrah"
         basis = "exact"
@@ -224,6 +276,7 @@ def match_geo(db: Session, text: str, limit: int = 5) -> dict:
         }
     keys = sorted(best, key=lambda k: -best[k])[:limit]
     candidates = [{**info[k], "code": k.split(":", 1)[1], "basis": basis, "score": round(best[k], 3)} for k in keys]
+    spelled_alike = basis == "exact" or spelt.get(keys[0], 0.0) >= SOUND_SPELLING_MIN
     # a place is more specific than a district or station word beside it ("Nabanna, Howrah": the place's station, not the district's namesake)
     pool = [c for c in candidates if c["kind"] == "place"] or [
         c for c in candidates if c["kind"] in ("police_station", "place")
@@ -235,7 +288,7 @@ def match_geo(db: Session, text: str, limit: int = 5) -> dict:
     return {
         "matched": True,
         "exact": basis == "exact",
-        "confident": basis == "exact" or best[keys[0]] >= SOUND_CONFIDENT,
+        "confident": basis == "exact" or (best[keys[0]] >= SOUND_CONFIDENT and spelled_alike),
         "police_station": next(iter(stations)) if one else None,
         # the same station as a Bengali / Hindi voice can SAY it: those voices drop English letters, which blocks the whole reply
         "police_station_bn": (named or {}).get("police_station_bn") or None,

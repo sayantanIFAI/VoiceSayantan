@@ -130,6 +130,15 @@ def _ensure_seeded():
     _run_startup_once_per_launch(_ensure_seeded_unlocked)
 
 
+@app.on_event("startup")
+def _start_geo_refresh():
+    """Owner, 2026-11-04: Kolkata's localities and colonies are downloaded once a day into geo_places (clinic-api/geo_loader.py). Off with GEO_REFRESH=0."""
+    if os.environ.get("GEO_REFRESH", "1") == "1":
+        import geo_loader
+
+        geo_loader.start_background()
+
+
 def _ensure_seeded_unlocked():
     """Create the schema, and seed it only if it is EMPTY.
 
