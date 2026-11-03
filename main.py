@@ -4613,8 +4613,8 @@ def _drop_unfounded_ambiguity(said: str, result: dict) -> dict:
 
 
 _HEARING_CHECK = re.compile(
-    r"শুনতে\s*পাচ্ছেন|শুনতে\s*পাচ্ছ(?!ি)|শুনতে\s*পান|শুনতে\s*পারছেন|শুনতে\s*পাওয়া\s*যাচ্ছে|শুনতে\s*পেয়েছেন|আওয়াজ\s*(?:আসছে|পাচ্ছেন|যাচ্ছে)|ভয়েস\s*(?:আসছে|পাচ্ছেন)|কথা\s*শোনা\s*যাচ্ছে|আছেন\s*লাইনে|লাইনে\s*আছেন|"
-    r"आवाज़\s*आ\s*रही|सुनाई\s*दे\s*रहा|सुन\s*पा\s*रहे|can you hear|do you hear|are you there|hear me|can you listen",
+    r"শুনতে\s*পাচ্ছেন|শুনতে\s*পাচ্ছ(?!ি)|শুনতে\s*পান\b|শুনতে\s*পারছেন|শুনতে\s*পাওয়া\s*যাচ্ছে|শুনতে\s*পেয়েছেন|আওয়াজ\s*(?:আসছে|পাচ্ছেন|যাচ্ছে)|ভয়েস\s*(?:আসছে|পাচ্ছেন)|কথা\s*শোনা\s*যাচ্ছে|আছেন\s*লাইনে|লাইনে\s*আছেন|"
+    r"आवाज़\s*आ\s*रही|सुनाई\s*दे\s*रहा|सुन\s*पा\s*रहे|\bcan you hear\b|\bdo you hear\b|\bare you there\b|\bhear me\b|\bcan you listen\b",
     re.I,
 )
 
@@ -4646,7 +4646,7 @@ async def _answer_hearing_check(session: CallSession, text: str, lang: str) -> b
     return True
 
 
-_CLINIC_OPEN = re.compile(r"খোলা|খুলা|খুলবে|খুলেছে|খোলে|খুলবেন|खुला|खुलेगा|खुलेगी|বন্ধ|बंद|open|closed?", re.I)
+_CLINIC_OPEN = re.compile(r"খোলা|খুলা|খুলবে|খুলেছে|খোলে|খুলবেন|खुला|खुलेगा|खुलेगी|বন্ধ|बंद|\bopen\b|\bclosed?\b", re.I)
 
 
 async def _answer_clinic_open(session: CallSession, text: str, lang: str) -> bool:
@@ -4659,7 +4659,7 @@ async def _answer_clinic_open(session: CallSession, text: str, lang: str) -> boo
         return False
     if re.search(r"লিংক|লিঙ্ক|link|পেমেন্ট|payment|হোয়াটস|whatsapp|রিপোর্ট|report|অ্যাকাউন্ট|account|ওয়েবসাইট|website|pdf", t, re.I):
         return False  # "the link does not open" is not "is the clinic open"
-    if re.search(r"বন্ধ|बंद|closed?", t, re.I) and not (owner_answers._mentions_sonoscan(owner_answers._norm(t)) or re.search(r"ক্লিনিক|clinic|আপনাদের|আপনারা|क्लिनिक", t, re.I)):  # noqa: SLF001
+    if re.search(r"বন্ধ|बंद|\bclosed?\b", t, re.I) and not (owner_answers._mentions_sonoscan(owner_answers._norm(t)) or re.search(r"ক্লিনিক|clinic|আপনাদের|আপনারা|क्लिनिक", t, re.I)):  # noqa: SLF001
         return False
     with contextlib.suppress(Exception):
         answer = (await _tools.get_faq("hours", lang)).get("answer")
@@ -6117,6 +6117,12 @@ async def _route_and_transcribe(session: CallSession, utterance_wav: str):
             hi_agree = float(getattr(r_hi, "decoder_agreement", 0.0) or 0.0)
             wholly = language_of_script(getattr(r_hi, "text", ""), "?") == "hi" and len((r_hi.text or "").split()) >= 2
             logger.info("[%s] Hindi words in the Bengali reading %r: Hindi reading %r (agreement %.2f against %.2f, Devanagari: %s)", session.call_id, result.text, getattr(r_hi, "text", ""), hi_agree, bn_agree, wholly)
+            # Owner, 2026-11-03 ("বুক করেন" became "क्या बुक कर रहे हैं" -- a question the caller never asked): the Hindi decoder invents words on a short clip. A Hindi reading that has far more words
+            # than the Bengali reading is not the same sentence; the Bengali reading stands.
+            _n_bn, _n_hi = len((result.text or "").split()), len((getattr(r_hi, "text", "") or "").split())
+            if _n_hi - _n_bn > max(1, _n_bn // 2):
+                logger.info("[%s] the Hindi reading has %d words against %d: it is not the same sentence, the Bengali reading stands", session.call_id, _n_hi, _n_bn)
+                return lang, result, decisive
             # Hindi-only words are written in the sentence: it IS Hindi, whatever language ID said. The Hindi reading is used when it is wholly Devanagari and not a mess (agreement >= 0.5); when it is, the Bengali
             # reading's words (a department, a doctor) still carry the meaning and the turn is answered in Hindi all the same.
             session.clear_winner_lang = "hi"
@@ -7889,6 +7895,18 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             # the SAME availability lookup both ways: found -> the sitting-time hint; not found (or
             # genuinely ambiguous) -> doctor_availability_reply's own "not found"/"did you mean" messaging,
             # clearing the slot so the caller is asked again NOW, not after the rest of the booking is moot.
+            if ("doctor_name" in changed or _routed_now) and st.slots.get("doctor_name") and not st.slots.get("date"):
+                # Owner, 2026-11-03 ("ঠিক আছে তাহলে বুক করেন" after Dr. Rina Mitra's day was told was answered with the same sitting line and "অ্যাপয়েন্টমেন্ট করব?" again): a caller who COMMITS to booking, naming no
+                # doctor, right after a doctor and a day were told, has agreed to that doctor on that day -- the hint is not said again and the booking asks for the next missing detail.
+                _ctx_enq = session.last_doctor_enquiry or {}
+                if (
+                    booking_carryover.commits_to_booking(text)
+                    and booking_carryover.recent(_ctx_enq, session.turn_count)
+                    and _ctx_enq.get("date")
+                    and not _text_names_a_doctor(text, lang)
+                ):
+                    st.slots["date"] = _ctx_enq["date"]
+                    st.asked_fields.add("date")
             if ("doctor_name" in changed or _routed_now) and st.slots.get("doctor_name") and not st.slots.get("date"):
                 try:
                     avail = await _tools.get_doctor_availability(st.slots["doctor_name"], None)
@@ -10577,7 +10595,9 @@ async def _dept_sitting_turn(session: CallSession, text: str, lang: str, topic: 
     # Owner, 2026-10-30: "আজকে জেনারেল মেডিসিন এর কে কে ডাক্তার আছে" -- a DAY said beside "which doctors are there" is a sitting question even with no sitting verb: today's doctors with a free slot, not the whole roster
     if not sit and (wd_iso or booking_capture.read_when(text, False, want_day=True).date) and (dept_talk.asks_names(text) or anyone):
         sit = True
-    if not sit or not (dept_talk.asks_names(text) or count or anyone or wd_iso):
+    # Owner, 2026-11-03 ("আজকে কি বসবে ডাক্তার … নিউরোলজি এর" was answered "হ্যাঁ, বসেন।" on a day nobody of Neurology sits): "does a <department> doctor sit <day>?" is a sitting question for THAT day
+    existence_day = sit and dept_talk.yes_no_existence(text) and bool(wd_iso or booking_capture.read_when(text, False, want_day=True).date)
+    if not sit or not (dept_talk.asks_names(text) or count or anyone or wd_iso or existence_day):
         return False
     if _text_names_a_doctor(text, lang) and not count:
         return False  # a particular doctor: the doctor steps answer

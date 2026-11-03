@@ -784,6 +784,9 @@ def hours_span(valid_slots: object) -> tuple[str, str] | None:
 
 # ----------------------------------------------------------------------------------------------------------------- wording
 
+# "book it" said to an offer of a day: a yes ("বুক করেন", "बुक कर दीजिए", "book it please"). Never "বুকে" (chest): the verb must follow.
+_BOOK_IT = re.compile(r"(?:বুক|बुक)\s*(?:কর|कर)|\bbook\s+(?:it|me|this|that|please)\b|\bplease\s+book\b", re.I)
+
 _PROMPTS = {
     # Owner, 2026-10-18: a number said in groups ("two digits, five times", "four, three, three") is answered with a short "ok" in each gap, not with a count.
     "phone_partial": {
@@ -1787,6 +1790,8 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
     offered = st.slots.get("_offered_date")
     if offered and not st.slots.get("date"):
         answer = confirm_answer(text, lang)
+        if answer is None and _BOOK_IT.search(text or ""):
+            answer = "yes"  # owner, 2026-11-03: "বুক করেন" / "book it" to "shall I book that day?" IS the yes
         if answer == "yes":
             st.slots.pop("_offered_date", None)
             plan.slots, plan.skip_model, plan.readback_answer = {**(plan.slots or {}), "date": offered}, True, True
