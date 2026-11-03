@@ -7131,6 +7131,10 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         if capture_plan.speak:
             await _speak(session, capture_plan.speak, lang)
             return
+        if dept_found is None and not capture_plan.skip_model and _clearly_garbled(session, text, lang):
+            logger.info("[%s] clearly garbled (not one word the agent can place): asking again without the intent model", session.call_id)
+            await _reask_or_handoff(session, session.reask.decide(transcript_issue="decoders_disagree", audio_issues=[]), "bn")
+            return
         if capture_plan.skip_model:
             data = {"intent": "book_appointment", "slots": capture_plan.slots or {}}
         else:
@@ -9295,6 +9299,78 @@ def _clearly_english(text: str, agreement: float) -> bool:
         return False
     plain = sum(1 for t in toks if t.lower() in _EN_FUNCTION_WORDS)
     return plain >= 4 and plain * 100 >= len(toks) * 45
+
+
+_BN_FUNCTION_WORDS = frozenset(
+    """আমি আমার আমাকে আমাদের আমরা আপনি আপনার আপনাকে আপনাদের আপনারা তুমি তোমার তুই ও এই এটা এটি ওটা সেটা এখানে ওখানে সেখানে এখন তখন তাহলে তাই কিন্তু তবে যদি যে যা যার যেটা তো বা আর এবং অথবা কিংবা
+    কি কী কে কাকে কার কোন কোনো কোনটা কোথায় কোথা কবে কখন কত কতটা কেন কীভাবে কিভাবে কিসের কেমন কারা কাদের কয়টা
+    না নাই নেই আছে আছেন আছো আছি নয় নি হ্যাঁ হা হাঁ জি জী ঠিক আচ্ছা ওকে ভালো ভাল খারাপ অনেক একটু আরেকটু খুব সব সবাই সবকিছু কিছু কেউ কাউকে আরও আরো শুধু শুধুই
+    হবে হয় হচ্ছে হয়েছে হলো হল হতে হবেন হন করব করবো করতে করুন করে করা করছি করেছি করেছেন করবেন করি চাই চাইছি চান চাইলে চাইব চাইবো লাগবে লাগে লাগছে দিন দিতে দেবেন দেব দিয়ে দেখাতে দেখা দেখব দেখবো দেখাব দেখাবো
+    বলুন বলছি বলতে বলবেন বললাম বলেছি বলো বলে বলেন জানতে জানি জানাবেন জানাতে যাব যাবো যাবে যাবেন যেতে যাচ্ছি এসেছি আসব আসবো আসবে আসবেন আসতে আসছি আসেন নিতে নেব নেবো নিন নিয়ে পাব পাবো পাবেন পাওয়া পারব পারবো পারবেন পারি পারেন
+    থেকে পর্যন্ত জন্য জন্যে সাথে সঙ্গে মধ্যে মতো মত পরে আগে পর ভিতরে বাইরে উপর নিচে কাছে দূরে সামনে একটা একটি একজন কয়েকটা অন্য অন্যটা প্রথম শেষ
+    আজ আজকে কাল কালকে পরশু সকাল সকালে বিকাল বিকালে বিকেল বিকেলে সন্ধ্যা সন্ধ্যায় রাত রাতে দুপুর দুপুরে সপ্তাহ মাস দিন বছর ঘণ্টা মিনিট সময়
+    উনি ওনি ওনার উনার তিনি তারা ওরা তার তাদের তাকে ওকে এরা এনার
+    লোক মানুষ বাবা মা ভাই দিদি দাদা বোন ছেলে মেয়ে বাচ্চা বউ স্বামী স্ত্রী বন্ধু আত্মীয় রোগী রোগীর
+    স্যার ম্যাডাম বাবু সাহেব হ্যালো হ্যাল্লো হেলো হ্যালো নমস্কার নমস্তে আদাব সালাম ধন্যবাদ দুঃখিত সরি প্লিজ দয়া করে
+    কথা বলা শোনা শুনতে পাচ্ছেন পাচ্ছি বুঝতে বুঝলাম বুঝিনি আবার একবার আরেকবার ধীরে আস্তে জোরে""".split()
+)
+_BN_CASE_SUFFIXES = ("দের", "েরা", "ের", "কে", "গুলো", "গুলি", "টা", "টি", "তে", "র", "ে", "য়", "ও", "ই")
+_BN_LEXICON_CACHE: dict = {}
+
+
+def _known_bn_words() -> set[str]:
+    """Every Bengali word the agent can place: everyday function words, and every word of the clinic's own tables (tests, doctors, FAQ topics, departments)."""
+    fp = _fast_path
+    if fp is None:
+        return set(_BN_FUNCTION_WORDS)
+    cached = _BN_LEXICON_CACHE.get(id(fp))
+    if cached is not None:
+        return cached
+    words: set[str] = set(unicodedata.normalize("NFC", w) for w in _BN_FUNCTION_WORDS)
+    with contextlib.suppress(Exception):
+        cat = fp.catalogue
+        for rows in (cat.tests, cat.doctors, cat.faq_topics):
+            for _name, forms in rows:
+                for f in forms:
+                    words.update(unicodedata.normalize("NFC", w) for w in re.split(r"[\s.,]+", f) if len(w) >= 2)
+        for ws in dept_talk.DEPT_WORDS.values():
+            words.update(unicodedata.normalize("NFC", w).lower() for w in ws)
+    _BN_LEXICON_CACHE.clear()
+    _BN_LEXICON_CACHE[id(fp)] = words
+    return words
+
+
+def _clearly_garbled(session: CallSession, text: str, lang: str) -> bool:
+    """Owner, 2026-11-03 ("বালসিরে আটি বেদা", agreement 0.93, took 3.7 s and was answered after the intent model and a test lookup): a short, wholly Bengali sentence in which NOT ONE word is a word the agent can place --
+    no everyday word, no word of the clinic's tables, no health word, no clinic business word -- said when nothing is open and the last thing said was a generic prompt (the greeting, "how can I help"). It is noise, or
+    words that mean nothing here, and the intent model cannot make sense of it either: the Bengali "say it slowly" is asked at once, without the model and without a lookup."""
+    toks = [t.strip(".,?!।") for t in (text or "").split() if t.strip(".,?!।")]
+    if not 2 <= len(toks) <= 6 or any(ch.isdigit() for ch in text):
+        return False
+    from agent.lang_select import script_share
+
+    if script_share(text, "bn") < 0.95 or not _free_for_offtopic(session):
+        return False
+    if (
+        off_topic.has_health_word(text)
+        or _CLINIC_BUSINESS.search(text)
+        or unrelated_caller.has_hospital_cue(text, lang, _catalogue_entity_in)
+        or classify_yes_no(text, lang) is not None
+        or greeting_words.is_greeting(text)
+        or call_end.is_closing_acknowledgement(text, lang)
+        or repeat_request.asks_repeat(text)
+        or match_lay_term(text) is not None
+    ):
+        return False
+    known = _known_bn_words()
+    for raw in toks:
+        t = unicodedata.normalize("NFC", raw)
+        if t in known:
+            return False
+        for suf in _BN_CASE_SUFFIXES:
+            if t.endswith(suf) and len(t) - len(suf) >= 2 and t[: -len(suf)] in known:
+                return False
+    return True
 
 
 def _english_is_clear(text: str, agreement: float) -> bool:
