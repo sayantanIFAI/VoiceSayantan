@@ -113,6 +113,31 @@ async def test_a_cache_miss_costs_the_model_turn_only_the_head_start_not_the_loo
     assert out["intent"] == "test_rate" and took < 0.6, took  # 0.1 head start + 0.2 model, not 1.2
 
 
+def test_the_default_head_start_is_shorter_than_the_embedding_it_does_not_wait_for(m):
+    """Pod logs 2026-10-17..11-03: the bge-m3 embedding on the CPU takes 0.15-0.2 s, so a 0.15 s head start held every model turn back for nothing;
+    an exact hit answers in about a millisecond and needs only a moment."""
+    assert 0.0 < m.CACHE_HEAD_START_S <= 0.1
+
+
+@pytest.mark.asyncio
+async def test_an_exact_hit_still_ends_the_turn_inside_the_default_head_start(m, resolve, monkeypatch):
+    monkeypatch.setattr(m, "_intent_cache", Cache(get_s=0.0, hit=dict(GOOD)))  # the in-memory exact tier: no embedding
+    started = []
+
+    async def no_codes():  # the spelled-code step asks the clinic catalogue; nothing to ask here
+        return []
+
+    monkeypatch.setattr(m, "_catalogue_codes", no_codes)
+
+    def model(text, max_retries=2, lang="bn", deadline_s=12.0):
+        started.append(1)
+        return dict(GOOD), {"total_time_s": 0.0, "attempts": 1}
+
+    monkeypatch.setattr(m, "extract_intent", model)
+    out, took = await resolve()
+    assert out["intent"] == "test_rate" and not started and took < 0.3, (started, took)
+
+
 @pytest.mark.asyncio
 async def test_a_failing_cache_is_a_miss_never_an_error(m, resolve, monkeypatch):
     class Broken:
