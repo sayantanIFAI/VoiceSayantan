@@ -4001,7 +4001,7 @@ async def _answer_owner_faq(session: CallSession, text: str, lang: str) -> bool:
             spoken = owner_answers.payment_link_timing_reply(lang)
         if not spoken and session.booking is not None and getattr(session.booking, "action", "") == "book_appointment" and owner_answers.asks_bare_cost(text):
             spoken = await _visit_fee_reply(session, text, lang)  # "কত লাগবে" in the middle of a doctor booking: that doctor's visit fee
-        spoken = spoken or owner_answers.branch_identity(text, lang) or owner_answers.scheme_cover(text, lang)
+        spoken = spoken or owner_answers.branch_identity(text, lang) or owner_answers.near_place_reply(text, lang) or owner_answers.scheme_cover(text, lang)
         if not spoken and owner_answers.asks_token_push(text):
             spoken = owner_answers.token_push_reply(lang)
         if not spoken:

@@ -160,6 +160,24 @@ def branch_identity(text: str, lang: str) -> str | None:
     }.get(lang, "")
 
 
+# ------------------------------------------------------------------------------------------------------------------------------------------ near
+# Owner, 2026-11-03: "এটা কি ওই বেলেঘাটার কাছে" (is it near Beliaghata?) is answered "হ্যাঁ". Places the clinic (44 C.I.T. Road, Beniapukur) IS near; the answer is a plain yes, said for these places only.
+_NEAR_WORDS = ("কাছে", "কাছাকাছি", "পাশে", "নিকটে", "near", "nearby", "close to", "next to", "पास", "नज़दीक", "नजदीक")
+_NEAR_PLACES = {
+    "beliaghata": (("বেলেঘাটা", "বেলিয়াঘাটা", "বেলেঘাটার", "বেলিয়াঘাটার", "beliaghata", "beleghata", "belgata", "बेलियाघाटा", "बेलेघाटा"), "বেলেঘাটা", "बेलियाघाटा", "Beliaghata"),
+}
+
+
+def near_place_reply(text: str, lang: str) -> str | None:
+    t = _norm(text)
+    if not t or len(t.split()) > 12 or not any(w in t for w in _NEAR_WORDS):
+        return None
+    for forms, bn, hi, en in _NEAR_PLACES.values():
+        if _has(t, forms):
+            return {"bn": f"হ্যাঁ, {bn}র কাছেই।", "hi": f"जी हाँ, {hi} के पास ही है।", "en": f"Yes, it is close to {en}."}.get(lang, f"Yes, it is close to {en}.")
+    return None
+
+
 # ----------------------------------------------------------------------------------------------------------------------------------------- schemes
 
 _SCHEME = (

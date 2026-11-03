@@ -92,6 +92,30 @@ def fold_letter_runs(tokens: list[str]) -> tuple[list[str], dict[str, str]]:
     return out, back
 
 
+def join_letter_runs(tokens: list[str]) -> tuple[list[str], dict[str, str]]:
+    """The same runs of spoken letters as fold_letter_runs, but each run becomes ONE word made of the letters as written ("সি আই টি" -> "সিআইটি"), so it can be compared by sound with a caller who says it as
+    a word ("সিট"). `back` says what each joined word stood for (owner, 2026-11-03: "কি বললেন সিট রোড" after "...সি আই টি রোড" was not recognised as being in the last answer)."""
+    out: list[str] = []
+    back: dict[str, str] = {}
+    i = 0
+    while i < len(tokens):
+        j = i
+        letters: list[str] = []
+        while j < len(tokens) and _letter(tokens[j]) is not None:
+            letters.append(_letter(tokens[j]))  # type: ignore[arg-type]
+            j += 1
+        latin_run = all(len(tokens[k]) == 1 and tokens[k].isascii() for k in range(i, j))
+        if letters and len(letters) >= (2 if latin_run else 3):
+            tok = "".join(tokens[i:j])
+            back[tok] = " ".join(tokens[i:j])
+            out.append(tok)
+            i = j
+        else:
+            out.append(tokens[i])
+            i += 1
+    return out, back
+
+
 def _tokens(text: str) -> list[str]:
     return [t for t in re.split(r"[\s,।.?!;:\-()\"']+", unicodedata.normalize("NFC", text or "")) if t]
 
@@ -139,6 +163,7 @@ def find(user_text: str, last_spoken: str, bare: bool = False) -> tuple[str, str
     spoken_sentences = [s.strip() for s in re.split(r"(?<=[।.?!])\s+", last_spoken) if s.strip()] or [last_spoken]
     best = None
     best_spoken_words = None
+    best_from_joined: dict[str, str] | None = None
     _back_spoken: dict[str, str] = {}
     for words, sk in _candidates(said):
         if sk in cue_skeletons:
@@ -146,12 +171,15 @@ def find(user_text: str, last_spoken: str, bare: bool = False) -> tuple[str, str
         for sentence in spoken_sentences:
             _stoks, _bk = fold_letter_runs(_tokens(sentence))
             _back_spoken.update(_bk)
-            for _w, sk2 in _candidates(_stoks):
-                ratio = 1.0 if sk == sk2 else difflib.SequenceMatcher(None, sk, sk2).ratio()
-                need = 1.0 if min(len(sk), len(sk2)) <= 4 else 0.86
-                if ratio >= need and (best is None or ratio > best[0] or (ratio == best[0] and len(sk) > len(best[3]))):
-                    best = (ratio, words, sentence, sk)
-                    best_spoken_words = _w
+            _jtoks, _jbk = join_letter_runs(_tokens(sentence))  # the spelled letters as one written word, for a caller who says them as a word
+            for _toks, _joined in ((_stoks, None), (_jtoks, _jbk)):
+                for _w, sk2 in _candidates(_toks):
+                    ratio = 1.0 if sk == sk2 else difflib.SequenceMatcher(None, sk, sk2).ratio()
+                    need = 1.0 if min(len(sk), len(sk2)) <= 4 else 0.86
+                    if ratio >= need and (best is None or ratio > best[0] or (ratio == best[0] and len(sk) > len(best[3]))):
+                        best = (ratio, words, sentence, sk)
+                        best_spoken_words = _w
+                        best_from_joined = _joined
     if best is None:
         return None
     # the words asked back must be most of what was said: one matching word inside a long ordinary question ("… কি বাড়ি গিয়ে নমুনা সংগ্রহ করেন") is not it
@@ -161,6 +189,11 @@ def find(user_text: str, last_spoken: str, bare: bool = False) -> tuple[str, str
     if bare and len([t for t in best[1].split() if t.lower() not in _STOP]) < len(content):
         return None  # a bare repeat is ONLY the agent's own words: one matching word inside a different sentence is not an echo
     words_out = best[1]
+    if best_from_joined and best_spoken_words:
+        words_out = best_spoken_words
+        for tok, original in best_from_joined.items():
+            words_out = words_out.replace(tok, original)  # "সিআইটি রোড" -> "সি আই টি রোড", as the agent said it
+        return words_out, best[2]
     if "zq" in words_out and best_spoken_words:
         words_out = best_spoken_words
         for tok, original in _back_spoken.items():
