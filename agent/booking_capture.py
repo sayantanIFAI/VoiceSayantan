@@ -970,7 +970,7 @@ def phone_invalid_prompt(step: "PhoneStep", lang: str) -> str:
     return prompt("phone_invalid", lang)
 
 
-_DETAIL_ORDER = ("phone", "patient_age", "patient_address")
+_DETAIL_ORDER = ("phone", "patient_name", "patient_age", "patient_address")  # owner, 2026-11-04: the number first, then the name, the age, the address
 
 
 def next_ask(st, lang: str, after: str) -> str | None:
@@ -978,13 +978,18 @@ def next_ask(st, lang: str, after: str) -> str | None:
     "I heard the name Sayan Das. Please tell me your number."). The next field still unanswered after `after`; None when nothing is left to ask. The field is marked asked."""
     from agent import reply_templates
 
-    start = {"patient_name": 0, "phone": 1, "patient_age": 2}.get(after, 0)
+    start = {"phone": 1, "patient_name": 2, "patient_age": 3}.get(after, 0)
     for field in _DETAIL_ORDER[start:]:
         if field == "phone":
             if st.slots.get("phone") or st.phone_declined:
                 continue
             st.asked_fields.add("phone")
             return reply_templates.missing_slot_prompt("book_appointment", "phone", lang)
+        if field == "patient_name":
+            if st.slots.get("patient_name") or st.pending_name:
+                continue
+            st.asked_fields.add("patient_name")
+            return reply_templates.missing_slot_prompt("book_appointment", "patient_name", lang)
         tag = "age" if field == "patient_age" else "address"
         if st.slots.get(field) or st.slots.get(f"_{tag}_done"):
             continue
@@ -1368,10 +1373,11 @@ def _detail_turn(st, text: str, lang: str, plan: "TurnPlan", field: str, parse, 
 
 
 def whatsapp_due(st) -> bool:
-    """True when the booking holds a number nobody has asked about yet."""
+    """True when nobody has asked yet whether the caller's number has WhatsApp and can pay online. Owner, 2026-11-04: asked at the FIRST of the booking -- as soon as the doctor, the day and the
+    time are settled -- and the number, the name, the age and the address follow."""
     if st.action != "book_appointment" or st.phone_declined or st.slots.get("_wa_asked"):
         return False
-    return bool(st.slots.get("contact_phone") or st.slots.get("phone"))
+    return all(st.slots.get(k) for k in ("doctor_name", "date", "time_slot")) and st.slots.get("_time_ok") != "pending"
 
 
 def address_heard(slots: dict, lang: str) -> str:
@@ -1917,7 +1923,7 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
     # A number already in progress from an earlier turn (st.phone_buffer) is still finished once started -- only a
     # FRESH number is held back, so the sentence is left for the name-capture rules below instead.
     missing = missing_required(st)
-    name_not_yet_given = "patient_name" in missing and not st.phone_buffer
+    name_not_yet_given = st.action != "book_appointment" and "patient_name" in missing and not st.phone_buffer  # (owner, 2026-11-04: a booking takes the number BEFORE the name)
     asked = "phone" in missing and (missing[0] == "phone" or "phone" in st.asked_fields)
     if "phone" in missing and not asked and any(t in _PHONE_CUES for t in _words(text)):
         asked = True  # "the number is ..." -- the caller is plainly giving the phone number, asked or not

@@ -8037,7 +8037,20 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                     await _speak(session, spelling_readback(spelled, lang), lang)
                     return
 
+            # Owner, 2026-11-04 ("এই নম্বরে কি হোয়াটসঅ্যাপ আছে, অনলাইন পেমেন্ট করতে পারবেন?" at the FIRST of the booking, then the number, the name, the age, the address): once the doctor, the day and the time are
+            # settled this is the next thing asked; the answer is read in booking_capture._whatsapp_turn.
+            if st.hold_token is not None and booking_capture.whatsapp_due(st):
+                await _speak(session, booking_capture.ask_whatsapp(st, lang), lang)
+                return
+
             missing = missing_required(st)
+            if missing and "phone" not in missing and st.action == "book_appointment" and not any(m in missing for m in ("doctor_name", "date", "time_slot")):
+                # the number is read back for a yes BEFORE the name is asked (it used to wait for the whole booking to be ready)
+                _num = effective_phone(st)
+                if _num != "not_provided" and not st.phone_buffer and st.slots.get("_phone_ok") != _num and not st.slots.get("_phone_pending"):
+                    st.slots["_phone_pending"] = _num
+                    await _speak(session, f"{booking_capture.prompt('phone_heard', lang, value=spoken_digit_groups(_num))} {booking_capture.prompt('is_right', lang)}", lang)
+                    return
             if missing:
                 field_name = missing[0]
                 # Real call 2026-10-18: a number given in pieces (nine digits, one short) counted as a second miss and the phone was GIVEN UP on -- the booking went on

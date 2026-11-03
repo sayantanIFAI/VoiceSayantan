@@ -29,7 +29,8 @@ from dataclasses import dataclass, field
 # ---------------------------------------------------------------- actions
 
 REQUIRED_SLOTS: dict[str, tuple[str, ...]] = {
-    "book_appointment": ("doctor_name", "date", "time_slot", "patient_name", "phone"),
+    # Owner, 2026-11-04: once the doctor and the day are settled the WhatsApp / online-payment question is asked, then the NUMBER, then the name, the age and the address
+    "book_appointment": ("doctor_name", "date", "time_slot", "phone", "patient_name"),
     "book_test": ("test_names", "date", "patient_name", "phone"),
     # a change needs the confirmation id AND a phone number that belongs to the booking (review 2026-10-28, P0); a booking found BY phone already has it
     "reschedule_appointment": ("confirmation_id", "phone", "new_date", "new_time_slot"),
