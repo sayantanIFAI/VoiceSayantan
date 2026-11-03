@@ -5359,6 +5359,26 @@ def _weekday_dates(text: str) -> list[str]:
     return out
 
 
+async def _write_name_offered_doctor(session: CallSession, text: str, lang: str) -> bool:
+    """Owner, 2026-11-03 ("ওনার কথা বলছেন?" -- "হ্যাঁ হ্যাঁ ওর কথাই বলছি তোর কাছে নাম লেখা যাবে কালকে" was answered "কোন ডাক্তারের সাথে অ্যাপয়েন্টমেন্ট করতে চান?"): the doctor offered a moment ago with
+    "ওনার কথা বলছেন?" (session.name_pick) is the doctor of a "write my name" request that names nobody. The day said with it ("কালকে") is answered for him, with the question whether to book. With several
+    doctors offered, only one the sentence names by sound is taken; otherwise nothing is guessed."""
+    pick = getattr(session, "name_pick", None)
+    if not pick or session.turn_count - pick.get("turn", -99) > 3 or _text_names_a_doctor(text, lang):
+        return False
+    infos = list(pick.get("infos") or [])
+    info = infos[0] if len(infos) == 1 else None
+    if info is None and infos:
+        hits = name_groups.which_offered(text, infos)
+        info = hits[0] if len(hits) == 1 else None
+    if info is None:
+        return False
+    session.name_pick = None
+    date_iso = booking_capture.read_when(text, False, want_day=True).date
+    await _confirmed_doctor_answer(session, info, date_iso, lang)
+    return True
+
+
 async def _write_name_dept_doctor(session: CallSession, text: str, lang: str) -> bool:
     """Owner, 2026-11-03 ("আপনাদের ওখানে ওই কার্ডিওলোজি সুব্রত ডাক্তারের কাছে নাম লেখাবো এই আসছে শনিবার বা রোববার"): a department and the doctor's FIRST name, said as the caller can, name ONE doctor of that
     department. His days are told -- each day named -- and the question is whether to book. Nothing when the department or the first name does not settle exactly one doctor."""
@@ -5393,6 +5413,8 @@ async def _answer_write_name(session: CallSession, text: str, lang: str) -> bool
     if _names_a_test(text, lang):
         return False
     if session.booking is None and await _write_name_dept_doctor(session, text, lang):
+        return True
+    if session.booking is None and await _write_name_offered_doctor(session, text, lang):
         return True
     booking = session.booking
     _offer = getattr(session, "dept_pending", None)

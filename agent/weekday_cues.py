@@ -49,7 +49,7 @@ _SPLIT_DAY_HI = re.compile(r"(रवि|सोम|मंगल|बुध|गु�
 _NEXT = frozenset(
     {
         "samner", "samne", "sammner", "shamner", "agami", "ashchhe", "aschhe", "ashche", "asche", "next", "coming", "upcoming", "agle", "agla", "aane", "aanewale", "aagami", "anewale",
-        "আসছে", "সামনের", "আগামী", "আগামি", "আসন্ন", "अगले", "अगला", "अगली", "आने", "आगामी",
+        "আসছে", "সামনের", "আগামী", "আগামি", "আসন্ন", "পরের", "পরবর্তী", "নেক্স্ট", "নেক্সট", "नेक्स्ट", "अगले", "अगला", "अगली", "आने", "आगामी",
     }
 )  # fmt: skip
 
@@ -120,11 +120,22 @@ def asks_day_availability(text: str, lang: str = "en") -> bool:
     return _has(tokens, _WEAK) and any(t in _DOCTOR_WORDS or t.startswith(_DOCTOR_STEMS) for t in tokens)
 
 
+# "next week's Tuesday": the weekday in the FOLLOWING calendar week (Monday to Sunday), not the first such day from today
+_NEXT_WEEK = re.compile(
+    r"(?:নেক্স্ট|নেক্সট|পরের|আগামী|আগামি|আসছে|সামনের)\s*(?:উইক|সপ্তাহ|সপ্তাহের|হপ্তা)|\bnext\s+week\b|(?:अगले|अगली|नेक्स्ट)\s*(?:हफ्ते|हफ़्ते|सप्ताह|वीक)",
+    re.I,
+)
+
+
 def resolve_date(text: str, today: datetime.date) -> str | None:
-    """The ISO date of the weekday named: the first such day from `today` on (today itself included), or the one AFTER today when the caller said "next / samner"."""
+    """The ISO date of the weekday named: the first such day from `today` on (today itself included), or the one AFTER today when the caller said "next / samner" /
+    "পরের" / "নেক্স্ট" (owner, 2026-11-03: "পরের মঙ্গলবার", said on a Tuesday, was read as today). With "next week" the weekday is the one in the following calendar week."""
     day = weekday_of(text)
     if day is None:
         return None
+    if _NEXT_WEEK.search(_norm(text)):
+        monday_next = today - datetime.timedelta(days=today.weekday()) + datetime.timedelta(days=7)
+        return (monday_next + datetime.timedelta(days=day)).isoformat()
     ahead = (day - today.weekday()) % 7
     if ahead == 0 and _has(_tokens(text), _NEXT, ("আসছ", "সামনের", "আগামী", "आने", "अगल")):
         ahead = 7
