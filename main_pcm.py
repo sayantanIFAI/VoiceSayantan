@@ -3481,7 +3481,8 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
         if _shared and len(_shared) >= 2:
             # Owner, 2026-11-03 ("আপনাদের ওখানে ডাক্তার রায় বসে"): a surname more than one doctor carries -> every one of them, each with his department, and "which one?"
             _name_pick_found.set(list(_shared))
-            return name_groups.shared_reply(list(_shared), str(slots.get("doctor_name") or ""), lang, lambda d: _dept_label(d, lang))
+            _reply_fn = name_groups.partial_reply if result.get("_level") == doctor_name_match.PARTIAL else name_groups.shared_reply
+            return _reply_fn(list(_shared), str(slots.get("doctor_name") or ""), lang, lambda d: _dept_label(d, lang))
         _cd = _turn_context_doctor.get()
         if not result.get("found") and not result.get("ambiguous") and _cd is not None and _resembles_doctor(str(slots.get("doctor_name") or ""), _cd):
             # Owner, 2026-10-29: Dr. Rajarshi Dutta is the subject and the caller says "রাজশ্রী দত্ত" -- the same surname and a first name that sounds close: it is him, no "no such doctor"
@@ -3523,7 +3524,7 @@ async def _answer_enquiry_intent(intent: str, slots: dict, lang: str) -> str | N
             if result.get("available") is False and result.get("next_available_date"):
                 _de_date = result["next_available_date"]
             _doctor_enquiry_found.set({"doctor_name": slots["doctor_name"], "date": _de_date, "window": result.get("chamber_hours")})
-        if not result.get("found") and (not result.get("ambiguous") or _first_and_surname_of_two_doctors(str(slots.get("doctor_name") or ""))) and _fast_path is not None:
+        if not result.get("found") and (not result.get("ambiguous") or _first_and_surname_of_two_doctors(str(slots.get("doctor_name") or ""))) and _fast_path is not None and len(result.get("_cands") or []) != 1:
             # Owner, 2026-10-29 ("অনীর্বাণ দত্ত"): a name that is nobody's -> "no doctor named X", then the doctors with that surname, with that first name, and the closest names (agent/name_groups.py)
             with contextlib.suppress(Exception):
                 _said = str(slots.get("doctor_name") or "")
@@ -4608,18 +4609,17 @@ def _drop_unfounded_ambiguity(said: str, result: dict) -> dict:
     has, and the result goes on as "not found" (the reply then says so, and offers the closest doctors from the clinic's own list)."""
     if result.get("found") or _fast_path is None:
         return result
-    if not (result.get("ambiguous") or result.get("did_you_mean") or result.get("did_you_mean_bn")):
-        return result
     # Owner, 2026-11-03 ("no guess, no trusting any guess"): the lookup's own list is not used at all. The candidates are the clinic's doctors whose name has the SAME sound as the one said, else a CLOSE sound
     # (agent/doctor_name_match.py); none = a name nobody has. More than one = a real choice; one = a question ("আপনি কি … বলতে চাইছেন?"), never an answer.
     infos = list(_fast_path.catalogue._doctor_info.values())  # noqa: SLF001
-    cands = doctor_name_match.candidates(said, infos)
+    cands, lvl = doctor_name_match.candidates_with_level(said, infos)  # exact spelling first, then sound, then compound surnames (সেনগুপ্ত for গুপ্তা); the strictest level that has any doctor is the whole answer
     return {
         **result,
         "ambiguous": len(cands) > 1,
         "did_you_mean": [c["name"] for c in cands],
         "did_you_mean_bn": [dept_talk.spoken_name(c, "bn") for c in cands],
         "_cands": cands,
+        "_level": lvl,
     }
 
 
@@ -10386,10 +10386,11 @@ async def _unknown_title_name_turn(session: CallSession, text: str, lang: str) -
     if not name:
         return False
     infos = list({id(i): i for i in _fast_path.catalogue._doctor_info.values()}.values())  # noqa: SLF001
-    cands = doctor_name_match.candidates(name, infos)
+    cands, lvl = doctor_name_match.candidates_with_level(name, infos)
     if len(cands) >= 2:
         session.name_pick = {"infos": list(cands), "turn": session.turn_count}
-        await _speak(session, name_groups.shared_reply(list(cands), name, lang, lambda d: _dept_label(d, lang)), lang)
+        _reply_fn = name_groups.partial_reply if lvl == doctor_name_match.PARTIAL else name_groups.shared_reply
+        await _speak(session, _reply_fn(list(cands), name, lang, lambda d: _dept_label(d, lang)), lang)
         return True
     if len(cands) == 1:
         session.doctor_check = {"info": cands[0], "turn": session.turn_count, "date": booking_capture.read_when(text, False, want_day=True).date}

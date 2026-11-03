@@ -123,6 +123,25 @@ def shared_reply(infos: list[dict], said: str, lang: str, label=None) -> str:
     }.get(lang, f"{word}: {who}")
 
 
+def partial_reply(infos: list[dict], said: str, lang: str, label=None) -> str:
+    """Owner, 2026-11-03 ("ডাক্তার গুপ্তা"): nobody carries the name as said, but it is the end of a longer name word (সেনগুপ্ত, দাশগুপ্ত). Said plainly, with each doctor's department, and asked "which one?".
+    Never an answer for one of them."""
+    def _named(i: dict) -> str:
+        n = spoken_name(i, lang)
+        dept = label(i.get("department") or "") if label and i.get("department") else ""
+        if not dept:
+            return n
+        return {"bn": f"{dept} বিভাগের {n}", "hi": f"{dept} विभाग के {n}", "en": f"{n} ({dept})"}.get(lang, n)
+
+    word = name_script.clean_query(said, lang) if lang in ("bn", "hi") else said
+    who = _join([_named(i) for i in infos[: MAX_PER_GROUP + 2]], lang)
+    return {
+        "bn": f"'{word}' নামে সরাসরি কোনো ডাক্তার নেই। কাছাকাছি নামে আছেন {who}। কার কথা বলছেন?",
+        "hi": f"'{word}' नाम के सीधे कोई डॉक्टर नहीं हैं। मिलते-जुलते नाम के डॉक्टर हैं {who}। आप किसकी बात कर रहे हैं?",
+        "en": f"No doctor is named '{word}' exactly. Close names: {who}. Which one do you mean?",
+    }.get(lang, f"{word}: {who}")
+
+
 def reply(groups: dict, said_text: str, lang: str, label=None) -> str:
     """The spoken answer for `groups` (see build)."""
     def _named(i: dict) -> str:

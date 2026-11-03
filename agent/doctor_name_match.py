@@ -1,26 +1,32 @@
 """Which doctors of the clinic's own list does a spoken name stand for? (owner, 2026-11-03)
 
 Why: "ডাক্তার শায়ক" (nobody of that name) was answered "নির্মল রায় নাকি পার্থ রায়?": the clinic lookup scores alike every doctor whose name ends the same way and calls that "ambiguous", and the agent read the guess
-out. A name said differently from how it is written ("রয়" for "রায়", "দত্ত" for "দত্ত", ন for ণ) must still be found, so the match is by SOUND, but never by a loose likeness. Two levels, in this order:
+out. A name said differently from how it is written ("রয়" for "রায়", ন for ণ) must still be found, so the match is by SOUND -- but exact spelling always comes first. Four levels, tried in this order, and the
+first level that has any doctor is the whole answer (a looser level is never added to a stricter one):
 
-  A. SAME SOUND  the two names have the same phonetic key (vowel length, the inherent vowel, য়-spelling, ন/ণ, শ/ষ/স, aspirated / unaspirated and dental / retroflex pairs, doubled letters are all
-                 forgotten). That is one name spelt two ways.
-  B. CLOSE SOUND the keys differ by at most a third (weighted edit distance: look-alike sounds cost little, any other letter costs a whole one), the FIRST sound is the same (a caller changes vowels, not
-                 the opening consonant), and the key is at least three sounds long. Only ever the subject of a QUESTION to the caller ("আপনি কি … বলতে চাইছেন?"), never an answer.
+  EXACT    every word said is spelt exactly as a word of the doctor's name ("অমিত" is Dr. Amit Kar; "রায়" is both Roy and Ray). Nothing else is offered beside it.
+  SAME     the same phonetic key (vowel length, the inherent vowel, য়-spelling, ন/ণ, শ/ষ/স, aspirated / unaspirated and dental / retroflex pairs, doubled letters are forgotten) AND spelt alike (a spelling ratio
+           of 0.7 or more). "রয়" for "রায়". Two names that only share their consonants ("অমিত" / "মৌমিতা", both ম-ত) are NOT the same.
+  CLOSE    the keys differ by at most a third (weighted edit distance), the FIRST sound is the same, and the key is at least three sounds long.
+  PARTIAL  the word said is the beginning or the end of a longer name word of a doctor ("গুপ্তা" is the end of "সেনগুপ্ত" and "দাশগুপ্ত"). Only ever a QUESTION to the caller ("which one?"), never an answer.
 
-Only doctors of the clinic's list are candidates, so nothing outside it is ever offered. A name that reaches neither level is nobody's. Pure functions, no I/O.
+Only doctors of the clinic's list are candidates, so nothing outside it is ever offered. A name that reaches no level is nobody's. Pure functions, no I/O.
 """
 
 from __future__ import annotations
 
+import difflib
 import re
 import unicodedata
 
 from agent import name_script
 
-SAME, CLOSE = "same", "close"
+EXACT, SAME, CLOSE, PARTIAL = "exact", "same", "close", "partial"
+_ORDER = {EXACT: 0, SAME: 1, CLOSE: 2, PARTIAL: 3}
 CLOSE_MAX = 0.34  # of the longer key
 MIN_CLOSE_LEN = 3
+MIN_PARTIAL_LEN = 3
+SPELL_MIN = 0.7  # a same-sound match must also be spelt alike
 
 _BN_MERGE = str.maketrans(
     {
@@ -38,6 +44,12 @@ _TITLES = name_script._TITLES  # noqa: SLF001
 
 def _collapse(s: str) -> str:
     return re.sub(r"(.)\1+", r"\1", s)
+
+
+def plain(word: str) -> str:
+    """The word as written, without case, punctuation or the nukta, Devanagari turned into Bengali letters: what 'spelt exactly' compares."""
+    w = unicodedata.normalize("NFC", word or "").lower().strip(".,?!।")
+    return name_script._deva_to_bn(w).replace("়", "")  # noqa: SLF001
 
 
 def key(word: str) -> str:
@@ -74,17 +86,31 @@ def distance(a: str, b: str) -> float:
 
 
 def word_level(said: str, own: str) -> str | None:
-    """SAME, CLOSE or None for one spoken word against one word of a doctor's name."""
+    """EXACT, SAME, CLOSE or None for one spoken word against one word of a doctor's name."""
     if said.isascii() != own.isascii():
         return None
+    ps, po = plain(said), plain(own)
+    if not ps or not po:
+        return None
+    if ps == po:
+        return EXACT if len(ps) >= 2 else None
     ks, ko = key(said), key(own)
     if not ks or not ko:
         return None
     if ks == ko:
-        return SAME if len(ks) >= 2 or said.lower() == own.lower() else None
+        # the same consonants are not enough ("অমিত" / "মৌমিতা"): the words must also be spelt alike
+        return SAME if len(ks) >= 2 and difflib.SequenceMatcher(None, ps, po).ratio() >= SPELL_MIN else None
     if len(ks) < MIN_CLOSE_LEN or len(ko) < MIN_CLOSE_LEN or ks[0] != ko[0]:
         return None
     return CLOSE if distance(ks, ko) / max(len(ks), len(ko)) <= CLOSE_MAX else None
+
+
+def is_partial(said: str, own: str) -> bool:
+    """The word said is the beginning or the end of a longer name word ("গুপ্তা" ... "সেনগুপ্ত"). Compared by sound, never shorter than three sounds."""
+    if said.isascii() != own.isascii():
+        return False
+    ks, ko = key(said), key(own)
+    return len(ks) >= MIN_PARTIAL_LEN and len(ko) > len(ks) and (ko.endswith(ks) or ko.startswith(ks))
 
 
 def _words(text: str) -> list[str]:
@@ -108,38 +134,47 @@ def _own_words(info: dict) -> list[str]:
 
 
 def level(said: str, info: dict) -> str | None:
-    """SAME when every word said is the same sound as a different word of this doctor's name, CLOSE when each is at least close, None otherwise."""
+    """The level at which this doctor matches what was said: the loosest level any word needed (EXACT only when every word is spelt exactly), or None."""
     heard = [w for w in _words(said) if len(key(w)) >= 1]
     own = _own_words(info)
     if not heard or not own:
         return None
     used: set[int] = set()
-    worst = SAME
+    worst = EXACT
     for w in heard:
         best, best_i = None, -1
         for i, o in enumerate(own):
             if i in used:
                 continue
-            lv = word_level(w, o)
-            if lv == SAME or (lv == CLOSE and best is None):
+            lv = word_level(w, o) or (PARTIAL if is_partial(w, o) else None)
+            if lv is None:
+                continue
+            if best is None or _ORDER[lv] < _ORDER[best]:
                 best, best_i = lv, i
-                if lv == SAME:
+                if lv == EXACT:
                     break
         if best is None:
             return None
         used.add(best_i)
-        if best == CLOSE:
-            worst = CLOSE
+        if _ORDER[best] > _ORDER[worst]:
+            worst = best
     return worst
 
 
-def candidates(said: str, infos: list[dict]) -> list[dict]:
-    """The doctors this name stands for: those with the same sound; when there are none, those with a close sound. Empty when it is nobody's."""
+def candidates_with_level(said: str, infos: list[dict]) -> tuple[list[dict], str | None]:
+    """(the doctors this name stands for, the level they matched at). The strictest level that has any doctor is the whole answer; ([], None) when the name is nobody's."""
     seen, uniq = set(), []
     for i in infos:
         if id(i) not in seen:
             seen.add(id(i))
             uniq.append(i)
     graded = [(level(said, i), i) for i in uniq]
-    same = [i for lv, i in graded if lv == SAME]
-    return same or [i for lv, i in graded if lv == CLOSE]
+    for lv in (EXACT, SAME, CLOSE, PARTIAL):
+        hit = [i for g, i in graded if g == lv]
+        if hit:
+            return hit, lv
+    return [], None
+
+
+def candidates(said: str, infos: list[dict]) -> list[dict]:
+    return candidates_with_level(said, infos)[0]
