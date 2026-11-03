@@ -9297,6 +9297,15 @@ def _clearly_english(text: str, agreement: float) -> bool:
     return plain >= 4 and plain * 100 >= len(toks) * 45
 
 
+def _english_is_clear(text: str, agreement: float) -> bool:
+    """A real English sentence, not an English-looking guess at noise: agreement 0.9 or more, three Latin words or more, at least two plain English words making up 40% of them."""
+    toks = re.findall(r"[A-Za-z']+", text or "")
+    if len(toks) < 3 or agreement < 0.9 or not (text or "").isascii():
+        return False
+    plain = sum(1 for t in toks if t.lower() in _EN_FUNCTION_WORDS)
+    return plain >= 2 and plain * 100 >= len(toks) * 40
+
+
 def _resolve_reply_language(session: CallSession, detected_lang: str, decisive: bool = True, agreement: float = 1.0, text: str = "") -> str:
     """The language to REPLY in this turn (KCD-lay-terms, a live call 2026-09-28) -- locked to the first language
     established for the call, not re-derived from this turn's own language ID. `detected_lang` is what THIS turn's
@@ -9322,6 +9331,10 @@ def _resolve_reply_language(session: CallSession, detected_lang: str, decisive: 
     # Owner, 2026-10-29 ("বডি ফুলে গেছে" answered in Bengali, then the same speaker's next sentence written by the Hindi recogniser as "बोलती है हमारा बॉडी तो फूलेगे छे…" and answered in Hindi): once the
     # call has been answered in Bengali, a single Hindi-LOOKING turn never moves it. Only an explicit request, or the two-turn offer, can.
     if not session.lang_locked and decisive and detected_lang == "hi" and not session.lang_explicit and session.turn_count >= 1:
+        decisive = False
+    # Owner, 2026-11-03 ("like i want to get me uh couple", a garbled English guess at 0.80, locked the whole call to English and the lab-test line and the re-ask were then spoken in English): the call stays Bengali until
+    # the caller ASKS for another language, or says a clear English sentence (recognisers agree 0.9 or more, three Latin words or more, most of them plain English). Noise never moves the language.
+    if not session.lang_locked and decisive and detected_lang == "en" and not session.lang_explicit and not _english_is_clear(text, agreement):
         decisive = False
     if not session.lang_locked and decisive:
         _lock_reply_language(session, detected_lang)
