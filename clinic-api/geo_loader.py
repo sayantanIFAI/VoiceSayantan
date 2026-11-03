@@ -102,6 +102,23 @@ def refresh_if_due(force: bool = False) -> int | None:
     """One refresh when the last successful run is over a day old (or `force`). None = not due or the download failed; else the number of rows added."""
     if not force and time.time() - _last_run() < REFRESH_EVERY_S:
         return None
+    # the API runs several worker processes, each with this thread: only one of them refreshes (the others find the lock taken and the state file fresh)
+    try:
+        import fcntl
+
+        lock = open(STATE_PATH + ".lock", "w")
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (ImportError, OSError):
+        return None
+    try:
+        if not force and time.time() - _last_run() < REFRESH_EVERY_S:
+            return None
+        return _refresh()
+    finally:
+        lock.close()
+
+
+def _refresh() -> int | None:
     try:
         elements = fetch_elements()
     except Exception as e:  # network, rate limit, bad JSON: nothing changes, retried at the next check
