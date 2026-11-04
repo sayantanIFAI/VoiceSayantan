@@ -4976,6 +4976,14 @@ async def _answer_date_weekday(session: CallSession, text: str, lang: str) -> bo
     return True
 
 
+# The caller saying what THEY said (I said / I am saying / I told you): the cue "বলল" of _CHECK_CUES matches inside "বললাম", so these forms are recognised on their own and the sentence is left to the booking.
+_FIRST_PERSON_SAID = ("বললাম", "বলেছি", "বলেছিলাম", "বলছি", "বলতাম", "बोला मैंने", "मैंने कहा", "मैंने बोला", "i said", "i told", "i was saying")
+
+
+def _says_what_the_caller_said(low: str) -> bool:
+    return any(f in low for f in _FIRST_PERSON_SAID)
+
+
 async def _answer_word_check(session: CallSession, text: str, lang: str) -> bool:
     """The caller wants to be sure of a word in what was just said ("চুয়াল্লিশ বললেন?", "did you say forty-four?"). A number they name is looked for in the last
     thing the agent said: if it is there, it is confirmed digit by digit and the sentence is said again; if it is not, they are told plainly it was not said and
@@ -4994,6 +5002,8 @@ async def _answer_word_check(session: CallSession, text: str, lang: str) -> bool
         return False
     if booking_capture.read_digits(text)[1] >= 2:
         return False
+    if _says_what_the_caller_said(low):
+        return False  # "I said ..." is the caller giving a detail, never asking whether the agent said it (call 3fa23f68: "আমি নাম বললাম শুভজিৎ বয়স বললাম ঊনত্রিশ" was answered "না, আমি 29 বলিনি")
     if not any(c in low for c in _CHECK_CUES):
         return await _answer_echo(session, text, lang)  # no "did you say": a word asked back by sound ("বেনিয়া পুকুর কেয়া?")
     n = owner_answers.spoken_number(text)

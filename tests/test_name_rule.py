@@ -39,10 +39,20 @@ def waiting_for_name(**extra):
     return st
 
 
-@pytest.mark.parametrize("said", ["গায়ন্ত", "জয়ন্তী", "জয়ন্ত", "আমার নাম জয়ন্ত", "সুব্রত কুমার দাস", "Rahul Das"])
-def test_a_plain_name_is_read_back_for_a_yes(said):
+@pytest.mark.parametrize(
+    "said, lang",
+    [
+        ("গায়ন্ত", "bn"),
+        ("জয়ন্তী", "bn"),
+        ("জয়ন্ত", "bn"),
+        ("আমার নাম জয়ন্ত", "bn"),
+        ("সুব্রত কুমার দাস", "bn"),
+        ("Rahul Das", "en"),
+    ],
+)
+def test_a_plain_name_is_read_back_for_a_yes(said, lang):
     st = waiting_for_name()
-    plan = bc.before_model(st, said, "bn", agreement=1.0)
+    plan = bc.before_model(st, said, lang, agreement=1.0)
     assert plan.speak and st.pending_name, said
     assert st.pending_name.split()[-1].lower() in plan.speak.lower()  # the read-back carries the name as heard
     assert "patient_name" not in st.slots  # nothing is stored before the yes
@@ -87,15 +97,29 @@ def test_it_only_applies_when_the_name_is_the_next_thing_asked():
 
 def test_poor_recognition_is_asked_again_but_the_second_try_is_let_through_on_less():
     st = waiting_for_name()
-    assert bc.before_model(st, "জয়ন্ত", "bn", agreement=0.0).speak is None  # first try, nothing usable
+    assert (
+        bc.before_model(st, "নলতির", "bn", agreement=0.0).speak is None
+    )  # first try, nothing usable (a name no list vouches for)
     assert st.slots["_name_tries"] == 1
-    assert bc.before_model(st, "জয়ন্ত", "bn", agreement=0.3).speak is None  # still too little
+    assert bc.before_model(st, "নলতির", "bn", agreement=0.3).speak is None  # still too little
     assert bc.before_model(
-        st, "জয়ন্ত", "bn", agreement=0.6
+        st, "নলতির", "bn", agreement=0.6
     ).speak  # a repeated answer heard at 0.6 is read back, not asked a third time
-    assert "_name_tries" not in st.slots and st.pending_name == "জয়ন্ত"
+    assert "_name_tries" not in st.slots and st.pending_name == "নলতির"
     first_try = waiting_for_name()
-    assert bc.before_model(first_try, "জয়ন্ত", "bn", agreement=0.6).speak is None  # 0.6 is not enough on the first try
+    assert (
+        bc.before_model(first_try, "নলতির", "bn", agreement=0.6).speak is None
+    )  # 0.6 is not enough on the first try for an unknown name
+
+
+def test_a_known_name_or_one_introduced_as_a_name_needs_less_agreement():
+    known = waiting_for_name()
+    assert bc.before_model(
+        known, "জয়ন্ত", "bn", agreement=0.6
+    ).speak  # a known first name: 0.6 is enough even on the first try
+    assert bc.before_model(waiting_for_name(), "জয়ন্ত", "bn", agreement=0.5).speak is None
+    cued = waiting_for_name()
+    assert bc.before_model(cued, "আমার নাম নলতির", "bn", agreement=0.6).speak  # introduced as the name
 
 
 def test_an_unknown_agreement_does_not_block_the_rule():

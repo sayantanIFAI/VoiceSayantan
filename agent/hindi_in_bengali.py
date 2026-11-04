@@ -36,10 +36,12 @@ def _skeleton_set() -> frozenset[str]:
 
 
 _SKELETONS = _skeleton_set()
-# Bengali words whose skeleton equals one of the above: never evidence (kept short, found by checking the list against Bengali clinic phrasing)
+# Bengali words whose skeleton equals one of the above: never evidence (kept short, found by checking the list against Bengali clinic phrasing).
+# Owner, 2026-11-04 (call 3fa23f68): "করুন" / "করেন" / "করিনি" / "করানো" (Bengali "do") share their skeleton with Hindi करना and "বাংলায়" with बोलिये; "না বেস করুন" (no, book) was read by the Hindi recogniser as
+# "मैं बिलकुल" and answered "yes, go ahead". Of 1,800 real Bengali utterances 26 of the 27 flagged were these words; only "উধার" (उधर) is really Hindi.
 _BENGALI_COLLISIONS = frozenset(
     name_script.name_skeleton(w)
-    for w in "কোন কোনটা কেমন কেমনে কত কতটা আছে আছেন হবে হয় হলো থাকবে বলুন বলেন বলো ঠিক ভালো অনেক আজকে কালকে এখন পরে আবার একটু মানে".split()
+    for w in "কোন কোনটা কেমন কেমনে কত কতটা আছে আছেন হবে হয় হলো থাকবে বলুন বলেন বলো ঠিক ভালো অনেক আজকে কালকে এখন পরে আবার একটু মানে করুন করেন করিনি করানো বাংলায়".split()
 )
 
 
