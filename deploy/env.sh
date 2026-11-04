@@ -158,3 +158,16 @@ if [ -z "${TWILIO_PUBLIC_BASE_URL:-}" ]; then
     [ -n "$_POD_ID" ] && export TWILIO_PUBLIC_BASE_URL="https://${_POD_ID}-8888.proxy.runpod.net"
     unset _POD_ID
 fi
+
+# AI-initiated human handoff via the Oracle PBX's transfer gateway (deploy/asterisk/transfer_gateway_nginx.conf,
+# agent/asterisk_bridge.py). Secrets from files, never committed -- same pattern as .hf_token/.clinic_api_token
+# above. Unset ASTERISK_TRANSFER_URL = handoff_human stays a no-op, same as before this existed.
+if [ -f /workspace/.asterisk_transfer_token ]; then
+    export ASTERISK_TRANSFER_URL=${ASTERISK_TRANSFER_URL:-https://137.23.58.119:8443/transfer}
+    export ASTERISK_TRANSFER_TOKEN
+    ASTERISK_TRANSFER_TOKEN=$(cat /workspace/.asterisk_transfer_token)
+    export ASTERISK_TRANSFER_BASIC_USER=${ASTERISK_TRANSFER_BASIC_USER:-transfer}
+    export ASTERISK_TRANSFER_BASIC_PASS
+    ASTERISK_TRANSFER_BASIC_PASS=$(cat /workspace/.asterisk_transfer_basic_pass)
+    export ASTERISK_TRANSFER_CA_CERT=${ASTERISK_TRANSFER_CA_CERT:-/workspace/.asterisk_transfer_ca.crt}
+fi

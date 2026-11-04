@@ -38,18 +38,40 @@ token scheme needed here. This adapter does not re-check anything; the gateway a
 WHAT IS DELIBERATELY NOT DONE HERE YET (open design question, not a bug)
 --------------------------------------------------------------------------------------------------
 DTMF_END events (caller pressed a keypad digit) are logged but NOT translated into the human-handoff
-decision. The project doc and CLAUDE.md both treat "press 0 = unconditional PBX-level human escape" as
-load-bearing behaviour, not something to improvise here. The architecturally clean way to do it is an
-ARI subscription on the ORIGINAL caller channel (so it fires regardless of what this media leg is
-doing) rather than this adapter's DTMF_END stream -- that is main.py's "live handoff lifecycle" piece
-per the doc's file list, and needs a senior-python-architect pass + a live call to verify, not a guess
-written while no VM/pod networking was even up yet. Similarly, send_text's "handoff_human" case is
-intentionally a no-op (logged) for the same reason -- see agent/twilio_bridge.py's identical choice to
-drop it for phone calls today.
+decision from THIS adapter -- keypad 0 is handled independently, at the PBX layer, by
+deploy/asterisk/ami_dtmf_transfer.py (an AMI client on the Oracle VM watching DTMFEnd events directly
+on the caller's own channel, which is immune to whatever this media leg is doing -- see that script's
+module docstring for why that has to be PBX-side, not here).
+
+AI-INITIATED HANDOFF (send_text's "handoff_human" case)
+--------------------------------------------------------------------------------------------------
+When main.py's _handoff_to_human() decides (deterministically -- agent/human_request.py,
+agent/lid.py's ambiguous-streak rule, emergency/abuse/complaint guards, never the LLM) that the
+caller needs a person, it sends a `{"type": "handoff_human", "reason": ...}` text frame down the
+same WebSocket this adapter wraps, then plays the spoken notice, then calls close(). This adapter:
+  1. On the frame: records the reason only. Redirecting the caller's channel immediately would tear
+     down this Dial() leg right then (ami_dtmf_transfer.py's own docstring: a Redirect ends the AI
+     leg's bridge) and cut the spoken notice off mid-sentence.
+  2. On close() (called only once that notice has finished playing): POSTs to the Oracle VM's
+     /transfer endpoint (ami_dtmf_transfer.py's EXTERNAL TRANSFER REQUESTS listener) with this
+     channel's id, asking for the exact same AMI Redirect keypad-0 triggers. Best-effort: if it
+     fails, the call still ends via the normal HANGUP path below, same as before this existed.
+This is OFF by default -- see CONFIGURATION. Until both env vars are set, the frame is only logged,
+exactly as before (agent/twilio_bridge.py keeps dropping it for phone calls the same way).
 
 CONFIGURATION
 --------------
-  ASTERISK_BRIDGE   "0" to not register the route at all (default: on)
+  ASTERISK_BRIDGE          "0" to not register the route at all (default: on)
+  ASTERISK_TRANSFER_URL    Oracle VM's transfer endpoint, e.g. "http://<oracle-host>:8091/transfer"
+                            (deploy/asterisk/ami_dtmf_transfer.py). Unset = handoff_human is logged
+                            only, nothing is redirected (today's behaviour, unchanged).
+  ASTERISK_TRANSFER_TOKEN  must match that script's TRANSFER_TOKEN. Both unset together is the safe
+                            default; setting one without the other also leaves this a no-op.
+  ASTERISK_TRANSFER_BASIC_USER / _PASS   only if the Oracle side sits behind
+                            deploy/asterisk/transfer_gateway_nginx.conf's Basic-Auth front door.
+  ASTERISK_TRANSFER_CA_CERT  path to a pinned cert for TLS verification (e.g. a copy of that
+                            gateway's self-signed cert). Unset = normal system CA verification,
+                            which fails closed against a self-signed cert -- never silently trusts one.
 """
 
 from __future__ import annotations
@@ -63,6 +85,7 @@ import json
 import logging
 import os
 import time
+import uuid
 import wave
 
 import numpy as np
@@ -91,6 +114,57 @@ _SEND_CHUNK_BYTES = 3200  # 100ms of 16kHz/16-bit mono PCM; keeps every outbound
 _CONVERT_CACHE_MAX = 128  # converted reply clips kept (pinned catalogue answers repeat constantly)
 
 _DISCONNECT = {"type": "websocket.disconnect"}
+
+# AI-initiated handoff (module docstring). Both unset (the default) keeps handoff_human a no-op,
+# same as before this existed. The other three are optional, for when the Oracle side sits behind
+# the TLS + Basic-Auth front door in deploy/asterisk/transfer_gateway_nginx.conf rather than being
+# reached directly: unset, httpx just does normal system CA verification (fails closed against a
+# self-signed cert, which is the safe default -- it does not silently accept anything).
+ASTERISK_TRANSFER_URL = os.environ.get("ASTERISK_TRANSFER_URL", "")
+ASTERISK_TRANSFER_TOKEN = os.environ.get("ASTERISK_TRANSFER_TOKEN", "")
+ASTERISK_TRANSFER_BASIC_USER = os.environ.get("ASTERISK_TRANSFER_BASIC_USER", "")
+ASTERISK_TRANSFER_BASIC_PASS = os.environ.get("ASTERISK_TRANSFER_BASIC_PASS", "")
+ASTERISK_TRANSFER_CA_CERT = os.environ.get("ASTERISK_TRANSFER_CA_CERT", "")  # path, e.g. a copy of the gateway's self-signed cert
+_TRANSFER_REQUEST_TIMEOUT_S = 4.0
+
+
+async def _request_pbx_transfer(channel_id: str, reason: str) -> bool:
+    """Asks deploy/asterisk/ami_dtmf_transfer.py's external-transfer listener (on the Oracle VM) to
+    Redirect this caller's channel to the human queue -- the same AMI action keypad-0 triggers there.
+    No-op, logged, until both ASTERISK_TRANSFER_URL and ASTERISK_TRANSFER_TOKEN are set. Best-effort:
+    a failure here is logged and swallowed, same discipline as _route_to_human_placeholder in main.py
+    -- the caller has already heard the handoff notice either way, and the call still ends normally."""
+    if not ASTERISK_TRANSFER_URL or not ASTERISK_TRANSFER_TOKEN:
+        logger.info(
+            "handoff_human on asterisk channel %s (%s) -- ASTERISK_TRANSFER_URL/TOKEN not set, not wired",
+            channel_id, reason,
+        )
+        return False
+    try:
+        import httpx  # lazy import, same reasoning as main.py's _route_to_human_placeholder
+
+        kwargs: dict = {"timeout": _TRANSFER_REQUEST_TIMEOUT_S}
+        if ASTERISK_TRANSFER_BASIC_USER and ASTERISK_TRANSFER_BASIC_PASS:
+            kwargs["auth"] = (ASTERISK_TRANSFER_BASIC_USER, ASTERISK_TRANSFER_BASIC_PASS)
+        if ASTERISK_TRANSFER_CA_CERT:
+            kwargs["verify"] = ASTERISK_TRANSFER_CA_CERT
+        async with httpx.AsyncClient(**kwargs) as client:
+            resp = await client.post(
+                ASTERISK_TRANSFER_URL,
+                json={
+                    "channel_id": channel_id,
+                    "request_id": str(uuid.uuid4()),
+                    "token": ASTERISK_TRANSFER_TOKEN,
+                },
+            )
+        if resp.status_code == 200:
+            logger.info("asterisk channel %s transfer requested (%s): %s", channel_id, reason, resp.text)
+            return True
+        logger.warning("asterisk transfer request for %s failed: HTTP %s", channel_id, resp.status_code)
+        return False
+    except Exception as e:  # noqa: BLE001 - best effort; see docstring above
+        logger.warning("asterisk transfer request for %s failed: %s", channel_id, e)
+        return False
 
 
 # ================================================================================================ outbound audio codec
@@ -168,6 +242,15 @@ class AsteriskStreamAdapter:
         self._ws = ws
         self._start_timeout_s = start_timeout_s
         self.channel_id: str | None = None
+        # The ORIGINAL caller's channel name (e.g. "PJSIP/2001-00000017") -- NOT self.channel_id, which
+        # is this media/WebSocket leg's own uniqueid (chan_websocket.c: ast_channel_uniqueid(instance->channel)).
+        # Redirecting the caller to the human queue needs the CALLER's channel, the one
+        # deploy/asterisk/ami_dtmf_transfer.py's AMI watcher tracks (Newexten's Channel field) -- confirmed by
+        # reading chan_websocket.c directly, not guessed, after a live test sent the media channel's id and got
+        # "channel not in AI leg" back. extensions.conf sets __CALLER_CHANNEL on the caller's channel before
+        # Dial(); the "__" prefix makes Asterisk inherit it onto this new WebSocket channel, so it shows up here
+        # in MEDIA_START's channel_variables. None until a call using the updated dialplan connects.
+        self.caller_channel_id: str | None = None
         self._inbox: asyncio.Queue = asyncio.Queue()
         self._reader: asyncio.Task | None = None
         self._send_lock = asyncio.Lock()
@@ -176,6 +259,7 @@ class AsteriskStreamAdapter:
         self._closed = False
         self.frames_in = 0
         self.frames_out = 0
+        self._pending_transfer_reason: str | None = None
 
     # -- handshake ---------------------------------------------------------------------------------------------
 
@@ -202,10 +286,20 @@ class AsteriskStreamAdapter:
                 continue
             if event.kind == "MEDIA_START":
                 self.channel_id = event.get("channel_id") or ""
+                variables = event.get("channel_variables") or {}
+                if isinstance(variables, dict):
+                    # Asterisk's ast_channel_inherit_variables (main/channel.c) stores a "__"-prefixed
+                    # inherited variable on the CHILD channel under its FULL name, prefix included --
+                    # it does NOT strip it the way a single "_" prefix does. Confirmed by reading that
+                    # function directly after a live test with the unprefixed key always came back None.
+                    self.caller_channel_id = variables.get("__CALLER_CHANNEL") or None
                 fmt = str(event.get("format", "")).lower()
                 if fmt and fmt not in ("slin16", "sln16"):
                     raise AsteriskStreamRejected(f"unsupported media format {fmt!r}, expected slin16")
-        logger.info("asterisk chan_websocket started: channel %s", self.channel_id)
+        logger.info(
+            "asterisk chan_websocket started: channel %s (caller channel %s)",
+            self.channel_id, self.caller_channel_id or "unknown -- extensions.conf not yet updated?",
+        )
         self._reader = asyncio.ensure_future(self._read_loop())
 
     # -- inbound -----------------------------------------------------------------------------------------------
@@ -317,24 +411,46 @@ class AsteriskStreamAdapter:
     async def send_text(self, text: str) -> None:
         """The browser protocol also carries JSON text (transcript lines, pings, config, handoff notices). The one
         that matters today is stop_playback (the caller talked over the agent): FLUSH_MEDIA drops what Asterisk has
-        queued. handoff_human is intentionally a no-op here -- see module docstring."""
+        queued. handoff_human only records the reason here -- the actual PBX transfer request is deferred to
+        close(), which runs once the spoken handoff notice has finished playing (see module docstring)."""
         try:
-            kind = json.loads(text).get("type")
+            payload = json.loads(text)
         except (TypeError, ValueError, AttributeError):
             return
+        kind = payload.get("type")
         if kind == "stop_playback":
             self._pending_marks.clear()
             await self._send_text(asterisk_media.encode_flush_media())
         elif kind == "handoff_human":
-            logger.info("handoff_human requested on asterisk channel %s -- not yet wired to an ARI transfer (see module docstring)", self.channel_id)
+            self._pending_transfer_reason = str(payload.get("reason") or "")
+            logger.info(
+                "handoff_human queued on asterisk channel %s (caller %s) (%s), transfer requested at close",
+                self.channel_id, self.caller_channel_id, self._pending_transfer_reason,
+            )
 
     async def close(self, code: int = 1000) -> None:
         """The agent hangs up (goodbye said, idle, handed to a human). Callers of close() already wait for their own
-        audio to finish; this adds a short bounded wait for the last MARK_MEDIA ack, then tears down, which ends the
-        Dial() and so the phone call."""
+        audio to finish; this adds a short bounded wait for the last MARK_MEDIA ack, then -- if a handoff_human
+        frame was queued (send_text) and the channel is still alive -- asks the Oracle VM's PBX to redirect the
+        caller to the human queue, before tearing down, which ends the Dial() and so this WebSocket leg.
+
+        Uses caller_channel_id, NOT channel_id: the Oracle-side AMI watcher (deploy/asterisk/ami_dtmf_transfer.py)
+        tracks the CALLER's own channel (its Newexten watcher sees that channel entering extension 7000), never
+        this media leg's channel -- confirmed live (see caller_channel_id's own docstring). Without
+        caller_channel_id (extensions.conf not yet updated with __CALLER_CHANNEL, or an old call predating it),
+        this is skipped rather than sent with the wrong id, which would only draw a harmless but noisy 404."""
         deadline = time.monotonic() + DRAIN_CLOSE_S
         while self._pending_marks and not self._closed and time.monotonic() < deadline:
             await asyncio.sleep(0.05)
+        if self._pending_transfer_reason is not None and not self._closed:
+            if self.caller_channel_id:
+                await _request_pbx_transfer(self.caller_channel_id, self._pending_transfer_reason)
+            else:
+                logger.warning(
+                    "handoff_human on asterisk channel %s could not be requested -- no caller_channel_id "
+                    "(extensions.conf's __CALLER_CHANNEL not seen in this call's MEDIA_START)",
+                    self.channel_id,
+                )
         await self.aclose(code)
 
     async def aclose(self, code: int = 1000) -> None:
