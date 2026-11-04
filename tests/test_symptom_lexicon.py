@@ -91,3 +91,29 @@ def test_a_reply_with_a_phone_number_is_split_so_only_the_number_is_slow():
 )
 def test_a_specialists_own_name_in_any_spelling_finds_the_department(text, dept):
     assert lex.departments_for(text) == [dept]
+
+
+# Owner, 2026-11-04: "ডেরমাটোলজিস্ট and dermatologist must be 95 percent similar -- for any department there is phonetic and accent variation": the specialist's name is matched BY SOUND, in any script.
+@pytest.mark.parametrize(
+    "text,dept",
+    [
+        ("dermetologist", "Dermatology"), ("dermatolajist", "Dermatology"), ("derma tologist", "Dermatology"),
+        ("কার্ডিওলোজিস্ট", "Cardiology"), ("kardiologist", "Cardiology"), ("cardeologist", "Cardiology"),
+        ("newrologist", "Neurology"), ("নিউরোলোজিস্ট", "Neurology"), ("ইউরলজিস্ট", "Urology"),
+        ("gaynecologist", "Gynaecology & Obstetrics"), ("gynocologist", "Gynaecology & Obstetrics"),
+        ("orthopedic", "Orthopaedics"), ("পেডিয়াট্রিসিয়ান", "Paediatrics"), ("এন্ডোক্রিনোলজিস্ট", "Diabetology & Endocrinology"),
+        ("gastroenterologist", "Gastroenterology"), ("অফথ্যালমোলজিস্ট", "Ophthalmology"), ("ডেন্টিস্ট", "Dentistry"),
+    ],
+)
+def test_a_specialists_name_is_found_by_sound_in_any_script_and_accent(text, dept):
+    assert lex.departments_for(text) == [dept]
+
+
+def test_no_doctors_name_is_taken_for_a_symptom_or_a_specialist():
+    # "Halder" is one letter from "hader" (bone), "Sarkar" sounds like "surgery", "মিত্র" is one letter from "মুত্র" (urine): a doctor's name never routes to a department
+    import seed
+
+    for key, (latin, bn, hi) in seed.doctor_full_names().items():
+        for name in {key, latin, bn, hi}:
+            if name:
+                assert lex.departments_for(name) == [], name

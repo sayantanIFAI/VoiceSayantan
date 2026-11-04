@@ -168,6 +168,72 @@ LEXICON: dict[str, dict[float, list[str]]] = {
     },
 }
 
+# Owner, 2026-11-04 ("ডেরমাটোলজিস্ট and dermatologist must be 95 percent similar -- for any department there would be phonetic and accent variation"): the specialist's / department's own name is also
+# matched BY SOUND, across Bengali, Hindi and Latin letters, with the same phonetic fold the place-name matcher uses (phonetic_match.phonetic_key): "ডেরমাটোলজিস্ট", "ডার্মাটোলজিস্ট",
+# "डर्मेटोलॉजिस्ट" and "dermatologist" all fold to the one key. These are the names; every spelling of them is found without being listed.
+SPECIALIST_NAMES: dict[str, list[str]] = {
+    "Dermatology": ["dermatologist", "dermatology", "dermatologists"],
+    "Cardiology": ["cardiologist", "cardiology", "cardiac"],
+    "Neurology": ["neurologist", "neurology"],
+    "Neurosurgery": ["neurosurgeon", "neurosurgery"],
+    "Urology": ["urologist", "urology"],
+    "Gynaecology & Obstetrics": ["gynecologist", "gynaecologist", "gynecology", "gynaecology", "obstetrician", "obstetrics"],
+    "Orthopaedics": ["orthopedic", "orthopaedic", "orthopedics", "orthopaedics", "orthopedician", "orthopaedician", "orthopedist"],
+    "ENT": ["otolaryngologist", "otolaryngology"],
+    "Psychiatry": ["psychiatrist", "psychiatry", "psychologist"],
+    "Paediatrics": ["pediatrician", "paediatrician", "pediatrics", "paediatrics", "pediatric"],
+    "Diabetology & Endocrinology": ["endocrinologist", "endocrinology", "diabetologist", "diabetology"],
+    "Gastroenterology": ["gastroenterologist", "gastroenterology", "gastrologist", "hepatologist"],
+    "Dentistry": ["dentist", "dentistry", "dental"],
+    "Ophthalmology": ["ophthalmologist", "ophthalmology", "optometrist"],
+    "General Medicine": ["physician", "physicians", "internist"],
+}
+_SOUND_MIN_CLASSES = 5  # a shorter fold meets too many unrelated words by chance (surgeon / surgery sound like the surnames Sarkar and Ganguly: left to the written table)
+
+
+try:  # clinic-api ships its own copy of the fold; the agent's tests import this module from the repo root
+    from phonetic_match import phonetic_key
+except ImportError:  # pragma: no cover
+    from agent.phonetic_match import phonetic_key
+
+_SOUND: dict[str, list[tuple[str, float]]] | None = None
+
+
+def _sound_index() -> dict[str, list[tuple[str, float]]]:
+    """phonetic key -> [(department, weight)] over the specialist names above ONLY. (Letting every table word into the sound index made a doctor's surname -- "Mukherjee", "Banerjee" -- sound like a symptom.)"""
+    global _SOUND
+    if _SOUND is None:
+        idx: dict[str, list[tuple[str, float]]] = {}
+        for dept, names in SPECIALIST_NAMES.items():
+            for name in names:
+                k = phonetic_key(name)
+                if len(k) >= _SOUND_MIN_CLASSES:
+                    idx.setdefault(k, []).append((dept, 2.0))
+        _SOUND = idx
+    return _SOUND
+
+
+def _sound_hits(text: str) -> dict[str, float]:
+    """department -> weight for every word of the sentence (and every two neighbouring words run together: "derma tologist") that SOUNDS like a specialist's name: the same fold, or (a long fold only) one
+    class dropped or added."""
+    out: dict[str, float] = {}
+    idx = _sound_index()
+    toks = _TOKEN.findall(text or "")
+    cands = list(toks) + [a + b for a, b in zip(toks, toks[1:])]
+    for tok in cands:
+        k = phonetic_key(tok)
+        if len(k) < _SOUND_MIN_CLASSES:
+            continue
+        for dept, weight in idx.get(k, ()):
+            out[dept] = max(out.get(dept, 0.0), weight - 0.1)  # a sound match ranks just under a written match
+        if len(k) >= 7:
+            for other, entries in idx.items():
+                if other != k and abs(len(other) - len(k)) <= 1 and len(other) >= 7 and _edit1(k, other):
+                    for dept, weight in entries:
+                        out[dept] = max(out.get(dept, 0.0), weight - 0.3)
+    return out
+
+
 # ------------------------------------------------------------------------------------------------------------------------------ folding
 _ZW = dict.fromkeys(map(ord, "​‌‍⁠﻿"))
 _FOLD = {
@@ -224,9 +290,10 @@ def _word_meets(sentence_word: str, table_word: str) -> int:
         if sentence_word[len(table_word):] in _SUFFIXES:
             return 2
     # a one-letter slip is trusted only in a long word (a short one is too easily another word)
-    if len(table_word) >= 5 and len(sentence_word) >= 4 and _edit1(sentence_word, table_word):
+    # (owner, 2026-11-04: seven letters or more -- at five, the surname "Halder" was one letter from "hader" (bone) and "মিত্র" from "মুত্র" (urine))
+    if len(table_word) >= 7 and len(sentence_word) >= 6 and _edit1(sentence_word, table_word):
         return 1
-    if len(table_word) >= 5 and len(sentence_word) > len(table_word):
+    if len(table_word) >= 7 and len(sentence_word) > len(table_word):
         stem = sentence_word[: len(table_word) + 1]
         if _edit1(stem, table_word) and sentence_word[len(table_word) + 1:] in _SUFFIXES:
             return 1
@@ -288,6 +355,9 @@ def score(text: str) -> dict[str, tuple[float, int]]:
             w = weight if q == 2 else weight - 0.25  # a near match never ties with an exact one (মাসিক "period" is one letter from মানসিক "mental")
             best, n = out.get(dept, (0.0, 0))
             out[dept] = (max(best, w), n + 1)
+    for dept, w in _sound_hits(text).items():
+        best, n = out.get(dept, (0.0, 0))
+        out[dept] = (max(best, w), n + 1)
     return out
 
 
