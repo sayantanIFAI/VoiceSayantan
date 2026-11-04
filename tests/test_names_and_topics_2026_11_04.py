@@ -73,3 +73,10 @@ def test_manasi_is_not_manas_in_any_of_the_doctors_spellings():
     assert name_groups.given_matches("মানস", givens)
     assert not name_groups.given_matches("মানসী", givens)  # another name
     assert not name_groups.given_matches("मानसी", givens)
+
+
+def test_an_offered_list_is_not_picked_by_another_ending_or_a_longer_surname():
+    manas = next(r for r in ROWS if r["full_name"] == "Dr. Manas Dutta")
+    assert name_groups.which_offered("কে বসে মানসী দত্ত", [manas]) == []  # মানসী is not মানস
+    assert name_groups.which_offered("কে বসে মানস দত্ত", [manas]) == [manas]
+    assert name_groups.which_offered("মানুষ দত্ত", [manas]) == [manas]  # as heard

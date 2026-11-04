@@ -5546,7 +5546,7 @@ def _first_and_surname_of_two_doctors(said: str) -> bool:
             return False
         for info in _fast_path.catalogue._doctor_info.values():  # noqa: SLF001
             given, sur = name_groups._own_names(info)  # noqa: SLF001
-            if any(name_groups.sounds_like_given(toks[0], g) for g in given) and not any(name_groups.ending_variant(toks[0], g) for g in given) and any(name_groups._same(toks[-1], x) for x in sur):  # noqa: SLF001
+            if any(name_groups.sounds_like_given(toks[0], g) for g in given) and not any(name_groups.ending_variant(toks[0], g) for g in given) and any(name_groups._same(toks[-1], x) and abs(len(toks[-1]) - len(x)) <= 2 for x in sur):  # noqa: SLF001  (Kumar is not Kar)
                 return False  # (2026-11-04: by sound, but not another ending -- মানুষ is মানস as heard, মানসী is not)
         return True
     return False

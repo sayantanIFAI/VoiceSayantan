@@ -154,7 +154,8 @@ def which_offered(text: str, infos: list[dict]) -> list[dict]:
     best, hits = 0, []
     for info in infos:
         given, sur = _own_names(info)
-        score = (2 if any(_same(t, g) for t in toks for g in given) else 0) + (1 if any(_same(t, s) for t in toks for s in sur) else 0)
+        # (2026-11-04: a first name with another ending is another name -- "মানসী" does not pick Dr. মানস; a surname must also be about as long as his)
+        score = (2 if any(given_matches(t, given) for t in toks) else 0) + (1 if any(_same(t, s_) and abs(len(t) - len(s_)) <= 2 for t in toks for s_ in sur) else 0)
         if score > best:
             best, hits = score, [info]
         elif score == best and score > 0:
