@@ -5411,7 +5411,7 @@ async def _speak_day_availability(session: CallSession, name: str, date_iso: str
     reply = doctor_weekday_yes_reply(slots, info, lang, date_iso) or doctor_availability_reply(slots, info, lang)
     if ask_book and info.get("found") and not reply.rstrip().endswith("?"):
         reply = f"{reply} {slot_proposal.book_that_day_question(date_iso, lang)}"
-    await _speak(session, _with_resume(session, reply, lang), lang)
+    await _speak(session, _with_resume(session, reply, lang), lang, repeat_ok=True)
 
 
 def _days_named(text: str) -> list[str]:
@@ -10403,12 +10403,12 @@ async def _first_name_only_turn(session: CallSession, text: str, lang: str) -> b
             say = name_groups.shared_reply(who, word, lang, label)
             if len(who) == 1 and lang == "bn":
                 say = say.replace("কার কথা বলছেন?", "ওনার কথা বলছেন?")
-            await _speak(session, say, lang)
+            await _speak(session, say, lang, repeat_ok=True)
             return True
-        await _speak(session, name_groups.reply(groups, word, lang, label), lang)
+        await _speak(session, name_groups.reply(groups, word, lang, label), lang, repeat_ok=True)
         return True
     say = {"bn": f"'{word}' নামে কেউ বসেন না।", "hi": f"'{word}' नाम के कोई डॉक्टर नहीं बैठते।", "en": f"No doctor here is named '{word}'."}.get(lang, f"No doctor here is named '{word}'.")
-    await _speak(session, say, lang)
+    await _speak(session, say, lang, repeat_ok=True)
     return True
 
 
@@ -10448,7 +10448,7 @@ async def _unknown_full_name_turn(session: CallSession, text: str, lang: str) ->
     if not groups:
         return False
     session.name_pick = {"infos": name_groups.offered(groups), "turn": session.turn_count}
-    await _speak(session, name_groups.reply(groups, said, lang, lambda d: _dept_label(d, lang)), lang)
+    await _speak(session, name_groups.reply(groups, said, lang, lambda d: _dept_label(d, lang)), lang, repeat_ok=True)  # (owner, 2026-11-04: asked again, the same fact is told again -- never a changed tactic)
     return True
 
 
