@@ -10908,7 +10908,10 @@ async def _day_part_sitting_reply(session: CallSession, text: str, lang: str, de
         return False
     label = _dept_label(dept_name, lang)
     lg = lang if lang in ("bn", "hi") else "en"
-    when_words = _when_phrase(iso, None, lang) + (f" {doctor_search._PART_WORD[part][lg]}" if part else "")  # noqa: SLF001
+    part_word = doctor_search._PART_WORD[part][lg] if part else ""  # noqa: SLF001
+    if part == "evening" and lg == "bn" and "বিকাল" in text:
+        part_word = "বিকালে"  # owner, 2026-11-04: said "বিকালবেলা" (afternoon), told "সন্ধ্যায়" (evening): the caller's own word is used
+    when_words = _when_phrase(iso, None, lang) + (f" {part_word}" if part else "")
     if after:
         when_words += {"bn": f" {after}-এর পর", "hi": f" {after} के बाद", "en": f" after {after}"}[lg]
     sitting = r.get("sitting") or []
