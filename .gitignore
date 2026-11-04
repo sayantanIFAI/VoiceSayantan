@@ -30,3 +30,7 @@ digits_pack/
 yo2_pack/
 glide_check/
 yo3_pack/
+
+# hypothesis cache and pod-local test recordings (audio of calls; kept on the volume, not in git)
+.hypothesis/
+test_clips/
