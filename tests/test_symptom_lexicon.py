@@ -72,3 +72,22 @@ def test_police_station_words_are_not_part_of_the_name(said, station):
 def test_a_reply_with_a_phone_number_is_split_so_only_the_number_is_slow():
     assert split_into_clauses("আমি নম্বরটা শুনেছি 9 6 3 5 5 , 8 8 2 0 1। রোগীর বয়স কত?") == ["আমি নম্বরটা শুনেছি 9 6 3 5 5 , 8 8 2 0 1।", "রোগীর বয়স কত?"]
     assert split_into_clauses("রোগীর বয়স 45 বছর। ঠিকানাটা বলবেন?") == ["রোগীর বয়স 45 বছর। ঠিকানাটা বলবেন?"]
+
+
+@pytest.mark.parametrize(
+    "text,dept",
+    [
+        ("আমাকে একটা ডেরমাটোলজিস্ট দেখাতে হবে", "Dermatology"),  # owner, 2026-11-04: the real call's spelling
+        ("ডার্মাটোলজিস্ট কে আছে", "Dermatology"),
+        ("डर्मेटोलॉजिस्ट चाहिए", "Dermatology"),
+        ("কার্ডিওলজিস্ট কে আছে", "Cardiology"),
+        ("कार्डियोलॉजिस्ट है क्या", "Cardiology"),
+        ("নিউরোলজিস্ট আছে", "Neurology"),
+        ("ইউরোলজিস্ট", "Urology"),
+        ("গাইনোকোলজিস্ট", "Gynaecology & Obstetrics"),
+        ("অর্থোপেডিক ডাক্তার", "Orthopaedics"),
+        ("সাইকিয়াট্রিস্ট", "Psychiatry"),
+    ],
+)
+def test_a_specialists_own_name_in_any_spelling_finds_the_department(text, dept):
+    assert lex.departments_for(text) == [dept]

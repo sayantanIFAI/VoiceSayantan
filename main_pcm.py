@@ -4476,11 +4476,11 @@ def _kolkata_sitting(sitting: list, label: str, lang: str) -> tuple[list, str]:
     return sitting, doctor_origin.filter_lead(False, label, lang)
 
 
-async def _dept_day_listing(session: CallSession, text: str, lang: str, sex: str | None, on_date: str | None, at_time: str | None) -> bool:
+async def _dept_day_listing(session: CallSession, text: str, lang: str, sex: str | None, on_date: str | None, at_time: str | None, dept_query: str | None = None) -> bool:
     """The doctors of the department the sentence is about, on one day (and time): who sits, asked which one -- or nobody, and who sits next. (Cut out of _dept_search_turn so a weekday question with no doctor named
     but a problem or a department in it, owner 2026-11-02, is answered the same way.) False when nothing was said."""
     try:
-        result = await _tools.department_doctors(text, lang, sex=sex, on_date=on_date, at_time=at_time)
+        result = await _tools.department_doctors(dept_query or text, lang, sex=sex, on_date=on_date, at_time=at_time)
     except ToolCallError:
         return False
     if not result.get("matched"):
@@ -4508,17 +4508,17 @@ async def _dept_day_listing(session: CallSession, text: str, lang: str, sex: str
             item = sitting[0]
             say = (kol_lead + " " if kol_lead else "") + slot_proposal.sits_statement(item["name"], on_date, at_time or item.get("start") or "", lang)
             session.dept_pending = {"kind": "confirm_one", "doctor": item, "date": on_date, "time": at_time, "turn": session.turn_count, "say": say}
-            await _speak(session, say, lang)
+            await _say(session, say, lang)
             return True
         if len(sitting) > 1:
             say = (kol_lead + " " if kol_lead else "") + doctor_search.sitting_pick_question([s["name"] for s in sitting], phrase_when, lang, items=sitting, dept_label=label)
             session.dept_pending = {"kind": "pick", "doctors": sitting, "date": on_date, "time": at_time, "turn": session.turn_count, "say": say}
-            await _speak(session, say, lang)
+            await _say(session, say, lang)
             return True
         others = []
         if at_time and on_date:
             with contextlib.suppress(ToolCallError):
-                again = await _tools.department_doctors(text, lang, sex=sex, on_date=on_date)
+                again = await _tools.department_doctors(dept_query or text, lang, sex=sex, on_date=on_date)
                 others = [s["name"] for s in again.get("sitting") or []]
         if not others and on_date:
             # Owner, 2026-10-24: when nobody sits on the asked day the agent says WHO sits next and WHEN, and offers the appointment -- it does not ask the caller to name another day.
@@ -4533,12 +4533,12 @@ async def _dept_day_listing(session: CallSession, text: str, lang: str, sex: str
                 else:
                     say = f"{lead} {doctor_search.sitting_pick_question([s['name'] for s in sit], _when_phrase(iso, None, lang), lang, items=sit)}"
                     session.dept_pending = {"kind": "pick", "doctors": sit, "date": iso, "time": None, "turn": session.turn_count, "say": say}
-                await _speak(session, say, lang)
+                await _say(session, say, lang)
                 return True
-        await _speak(session, doctor_search.nobody_sits(phrase_when or label, others, lang), lang)
+        await _say(session, doctor_search.nobody_sits(phrase_when or label, others, lang), lang)
         return True
     if sex:
-        await _speak(session, _with_resume(session, doctor_search.filtered_reply(result, sex, lang, label), lang), lang)
+        await _say(session, _with_resume(session, doctor_search.filtered_reply(result, sex, lang, label), lang), lang)
         return True
     return False
 
@@ -5300,6 +5300,27 @@ async def _speak_day_availability(session: CallSession, name: str, date_iso: str
     await _speak(session, _with_resume(session, reply, lang), lang)
 
 
+def _days_named(text: str) -> list[str]:
+    """Owner, 2026-11-04 ("সামনের সপ্তাহে মঙ্গলবার বুধবার ... দশ বা এগারো তারিখে"): EVERY day a sentence names, as ISO dates in order, from today on: a day of the month ("দশ তারিখ", "এগারো তারিখে",
+    "১০ তারিখ") and a weekday (each one, in "next week" when the sentence says so). At most three; the same date once."""
+    today = slot_proposal.clinic_now().date()
+    out: list[str] = []
+
+    def add(iso: str | None) -> None:
+        if iso and iso >= today.isoformat() and iso not in out:
+            out.append(iso)
+
+    for m in re.finditer(r"(\S+)\s*তারিখ", text or ""):
+        with contextlib.suppress(Exception):
+            add(booking_capture.read_when(f"{m.group(1)} তারিখ", False, want_day=True).date)
+    nextweek = "সামনের সপ্তাহে " if weekday_cues._NEXT_WEEK.search(weekday_cues._norm(text or "")) else ""  # noqa: SLF001
+    for tok in (text or "").split():
+        word = tok.strip(".,?!।")
+        if weekday_cues.weekday_of(word) is not None:
+            add(weekday_cues.resolve_date(nextweek + word, today))
+    return sorted(out)[:3]
+
+
 async def _answer_day_availability(session: CallSession, text: str, lang: str) -> bool:
     """"samner robibar doctor x ke pabo?" / "ei robibar" (owner, 2026-10-23, item 25). The weekday becomes the date of the coming such day and that doctor's
     availability then is told. No doctor named or just discussed: asked which one (session.pending_day). False (nothing said) for a lab test, or a bare weekday
@@ -5325,8 +5346,29 @@ async def _answer_day_availability(session: CallSession, text: str, lang: str) -
         # Owner, 2026-11-02 ("হাটু ব্যথা ... পায়ের হাড়ের ডাক্তার ... বুধবার আছে", "সামনের রোববার মাথার ডাক্তার"): a day and a problem or a department, no doctor: the department's doctors on that day, never "which doctor?"
         with contextlib.suppress(ToolCallError):
             _routed = await _route_dept(text, lang, session)
-            if _routed.get("matched") and await _dept_day_listing(session, text, lang, doctor_search.wanted_sex(text), date_iso, None):
-                return True
+            if _routed.get("matched"):
+                _dept = _routed["department_name"]
+                _days = _days_named(text)
+                if len(_days) >= 2:
+                    # Owner, 2026-11-04 ("ডেরমাটোলজিস্ট ... দশ বা এগারো তারিখে ... সকালবেলা"): two or three days asked at once -> the answer for EACH day (who sits in the morning, with a free slot), one after the other, ending
+                    # with one question.
+                    _pieces: list[str] = []
+                    for _d in _days:
+                        _sink: list = []
+                        _tok = _speech_sink.set(_sink)
+                        try:
+                            _ok = await _dept_day_listing(session, text, lang, doctor_search.wanted_sex(text), _d, None, dept_query=_dept)
+                        finally:
+                            _speech_sink.reset(_tok)
+                        if _ok and _sink:
+                            _pieces.append(" ".join(_sink))
+                    if _pieces:
+                        _last = len(_pieces) - 1
+                        _pieces = [p if i == _last else (p.rpartition("।")[0] + "।" if p.rstrip().endswith("?") and "।" in p else p) for i, p in enumerate(_pieces)]
+                        await _speak(session, _with_resume(session, " ".join(_pieces), lang), lang)
+                        return True
+                if await _dept_day_listing(session, text, lang, doctor_search.wanted_sex(text), date_iso, None, dept_query=_dept):
+                    return True
     if not name:
         session.pending_day = (session.turn_count, date_iso)
         await _speak(session, missing_slot_prompt("doctor_availability", "doctor_name", lang), lang)
