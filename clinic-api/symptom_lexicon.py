@@ -151,14 +151,13 @@ LEXICON: dict[str, dict[float, list[str]]] = {
     "General Medicine": {
         1: [
             "জ্বর", "জ্বরে", "জ্বর জ্বর", "সর্দি", "কাশি", "কফ", "ঠান্ডা লাগা", "ঠান্ডা লেগেছে", "গা গরম", "দুর্বল", "দুর্বলতা", "বমি", "বমি বমি", "ডায়রিয়া", "পাতলা পায়খানা", "পেট খারাপ",
-            "পেট ব্যথা", "পেটে ব্যথা", "শ্বাসকষ্ট", "শ্বাসের কষ্ট", "হাঁপানি", "ফুসফুস", "গা ব্যথা", "গা হাত পা ব্যথা", "শরীর ব্যথা", "অ্যালার্জি", "এলার্জি", "ডেঙ্গু", "ম্যালেরিয়া",
+            "পেট ব্যথা", "পেটে ব্যথা", "শ্বাসকষ্ট", "শ্বাসের কষ্ট", "হাঁপানি", "ফুসফুস", "গা ব্যথা", "গা হাত পা ব্যথা", "শরীর ব্যথা", "ডেঙ্গু", "ম্যালেরিয়া",
             "টাইফয়েড", "ডিহাইড্রেশন", "চেকআপ", "হেলথ চেকআপ", "অসুস্থ", "শরীর খারাপ", "শরীর ভালো নেই", "কেটে গেছে", "ক্ষত", "ইনফেকশন",
             "बुखार", "सर्दी", "खांसी", "खाँसी", "कमजोरी", "कमज़ोरी", "उल्टी", "दस्त", "पेट खराब", "पेट दर्द", "सांस", "साँस", "दमा", "बदन दर्द", "शरीर दर्द", "चेकअप", "तबीयत खराब", "एलर्जी",
-            "fever", "cold", "cough", "weakness", "vomiting", "diarrhoea", "diarrhea", "loose motion", "breathless", "asthma", "body ache", "checkup", "check-up", "unwell", "sick", "allergy",
+            "fever", "cold", "cough", "weakness", "vomiting", "diarrhoea", "diarrhea", "loose motion", "breathless", "asthma", "body ache", "checkup", "check-up", "unwell", "sick", 
             "infection", "swelling", "stomach pain", "jor", "jwor", "sardi", "kashi",
         ],
-        # (no "ache" -- in romanised Bengali it means "is" ("doctor ke ache?") -- and no bare "problem" / "সমস্যা": "what is the problem?" is a question the agent must still ask)
-        0.5: ["ব্যথা", "ব্যাথা", "যন্ত্রণা", "দর্দ", "दर्द", "तकलीफ", "pain"],
+        # (bare pain / allergy words are in VAGUE below: the caller is asked WHERE, owner 2026-11-04)
     },
     "Ophthalmology": {
         2: [ "অপথালমোলজিস্ট", "চক্ষু বিশেষজ্ঞ", "চক্ষু চিকিৎসক", "नेत्र रोग विशेषज्ञ", "ऑप्थैल्मोलॉजिस्ट", "ophthalmologist",
@@ -172,6 +171,28 @@ LEXICON: dict[str, dict[float, list[str]]] = {
 # Owner, 2026-11-04 ("ডেরমাটোলজিস্ট and dermatologist must be 95 percent similar -- for any department there would be phonetic and accent variation"): the specialist's / department's own name is also
 # matched BY SOUND, across Bengali, Hindi and Latin letters, with the same phonetic fold the place-name matcher uses (phonetic_match.phonetic_key): "ডেরমাটোলজিস্ট", "ডার্মাটোলজিস্ট",
 # "डर्मेटोलॉजिस्ट" and "dermatologist" all fold to the one key. These are the names; every spelling of them is found without being listed.
+# Owner, 2026-11-04 ("byatha ache doctor dekhabo", "allergyr doctor dekhabo"): a complaint that names the KIND (pain, allergy) but not the PLACE cannot be routed to a department. The caller is asked where --
+# "কোথায় ব্যথা?" / "কোথায় অ্যালার্জি?" -- and the answer plus the word goes through the normal routing ("পায়ে ব্যথা" -> bones, "চামড়ায় অ্যালার্জি" -> skin, "নাকে অ্যালার্জি" -> ENT).
+VAGUE: dict[str, list[str]] = {
+    "pain": ["ব্যথা", "ব্যাথা", "যন্ত্রণা", "ব্যথার", "দর্দ", "दर्द", "तकलीफ", "pain", "byatha", "betha", "bethha", "byathha", "dard", "painful"],
+    "allergy": ["অ্যালার্জি", "এলার্জি", "অ্যালার্জির", "এলার্জির", "অ্যালার্জিক", "एलर्जी", "allergy", "allergyr", "allergic", "allerji", "alerji"],
+}
+
+
+def vague_kind(text: str, doctor_names: Iterable[str] | None = None) -> str | None:
+    """"pain" or "allergy" when the sentence says that kind of complaint and NOTHING says where (no body part, no disease, no specialist: score() finds no department), else None."""
+    names = _name_words(doctor_names)
+    words = [w for w in _words(text) if w not in names]
+    if not words or score(text, doctor_names):
+        return None
+    for kind, terms in VAGUE.items():
+        for term in terms:
+            tw = _words(term)
+            if tw and _phrase_hits(words, tw):
+                return kind
+    return None
+
+
 SPECIALIST_NAMES: dict[str, list[str]] = {
     "Dermatology": ["dermatologist", "dermatology", "dermatologists"],
     "Cardiology": ["cardiologist", "cardiology", "cardiac"],

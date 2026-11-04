@@ -579,7 +579,33 @@ def resend_reply(result: dict, lang: str = "bn") -> str:
     return "দুঃখিত, এই কনফার্মেশন নম্বরে কোনো বুকিং খুঁজে পেলাম না।"
 
 
+LOCATION_QUESTIONS = {
+    "pain": {"bn": "কোথায় ব্যথা হচ্ছে বলুন?", "hi": "कहाँ दर्द हो रहा है, बताइए?", "en": "Where is the pain?"},
+    "allergy": {
+        "bn": "কোথায় অ্যালার্জি হচ্ছে — চামড়ায়, নাকে, নাকি চোখে?",
+        "hi": "एलर्जी कहाँ हो रही है -- त्वचा पर, नाक में या आँखों में?",
+        "en": "Where is the allergy -- on the skin, in the nose or in the eyes?",
+    },
+}
+
+
+def location_question(kind: str, lang: str) -> str:
+    """Owner, 2026-11-04: "byatha ache doctor dekhabo" / "allergyr doctor dekhabo" -- WHERE is asked before any department is suggested."""
+    return LOCATION_QUESTIONS[kind].get(lang, LOCATION_QUESTIONS[kind]["en"])
+
+
+def location_kind_of(text: str) -> str | None:
+    """The kind ("pain" / "allergy") when `text` is one of the location questions (said by the agent), else None."""
+    t = (text or "").strip()
+    for kind, by_lang in LOCATION_QUESTIONS.items():
+        if any(t == q or t.startswith(q) for q in by_lang.values()):
+            return kind
+    return None
+
+
 def department_route_reply(result: dict, symptom: str, lang: str = "bn") -> str:
+    if result.get("needs_location"):
+        return location_question(result["needs_location"], lang)
     if lang != "bn":
         return _i18n.department_route_reply(result, symptom, lang)
     if result.get("matched"):

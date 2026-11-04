@@ -1300,6 +1300,10 @@ def route_department(db: Session, query_text: str, lang: str, age: int | None = 
         for d in db.query(Doctor).all():
             doctor_names += [d.name, d.full_name, d.full_name_bn, d.full_name_hi, d.aliases_bn, d.aliases_hi]
         lex_names = symptom_lexicon.departments_for(query_text, doctor_names)  # a doctor's name (or alias) is never taken for a symptom or a specialist
+        if not lex_names:
+            needs = symptom_lexicon.vague_kind(query_text, doctor_names)
+            if needs:
+                return {"matched": False, "needs_location": needs}  # "byatha ache" / "allergyr doctor": pain or allergy, but WHERE? the caller is asked
         if lex_names:
             by_name_lex = {d.name: d.id for d in db.query(Department).all()}
             matches = list(dict.fromkeys(by_name_lex[n] for n in lex_names if n in by_name_lex))

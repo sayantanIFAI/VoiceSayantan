@@ -239,6 +239,8 @@ from agent.phrases import HANDOFF_ALL_LANGUAGES, phrase, prewarm_lines
 from agent.playback_gate import PlaybackGate
 from agent.reask_policy import DEFAULT_MAX_REASKS, ReaskTracker
 from agent.reply_templates import (
+    location_kind_of,
+    location_question,
     add_test_reply,
     blood_test_list_reply,
     booking_confirmation_readback,
@@ -1236,6 +1238,7 @@ class CallSession:
         # sourav, 2026-10-14: the doctor (and date) the last FOUND doctor-availability answer was about, so "book him / that day" has
         # something to point at (agent/booking_carryover.py). {"doctor_name", "date", "turn"} or None.
         self.last_doctor_enquiry: dict | None = None
+        self.pending_location: dict | None = None  # owner, 2026-11-04: {"kind": "pain" | "allergy", "turn"} after the agent asked WHERE
         self.reschedule_wish: dict | None = None  # owner, 2026-10-31: how far / from which date a caller wants a booking moved (agent/reschedule_request.py)
 
         # KCD-061: the single, versioned carrier of caller signals
@@ -1633,6 +1636,9 @@ async def _speak(session: CallSession, text: str, lang: str | None = None, fallb
         apology_events.record("stacked_removed", "reply", lang)
     # sourav, 2026-10-24 (owner): a date is SAID by what is nearest in time -- "18th" -> "আঠারো তারিখ" (same month: no month, no date format); "2 September" from October ->
     # "সামনের মাসের দুই তারিখ"; further away: the month's name (agent/date_phrase.py). Every ISO date in a reply is reworded here, once, just before speaking.
+    _asked_where = location_kind_of(text)
+    if _asked_where:
+        session.pending_location = {"kind": _asked_where, "turn": session.turn_count}
     text = date_phrase.speak_dates(text, lang, slot_proposal.clinic_now().date())
     # Owner, 2026-11-03: the log held what the caller said ("heard") but not what the agent said back, so a call could not be read as a conversation. This is the one
     # place every reply passes (the text frame below and the audio after it), and the line is the exact final text. A reply cut short by a barge-in is logged in full:
@@ -4302,6 +4308,8 @@ async def _general_medicine_today_suffix(dept: str, lang: str) -> str:
 
 async def _route_reply(session: CallSession, routed: dict, symptom: str, lang: str) -> str:
     """department_route_reply, except that when nobody of the department sits today the next sitting is told and offered (see _next_sitting_offer) and kept as the open question."""
+    if routed.get("needs_location"):
+        return location_question(routed["needs_location"], lang)
     if routed.get("matched"):
         session.unclear_problem_asks = 0
     elif not routed.get("ambiguous") and not eye_words.mentions_eye(symptom):
@@ -7200,6 +7208,17 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         # did not understand" -- real call 2026-10-17.
         session.lapsed_pending = (pending, session.turn_count)
 
+    _pl = getattr(session, "pending_location", None)
+    if _pl and session.booking is None and session.turn_count - _pl["turn"] <= 2 and len(text.split()) <= 8 and not confirmed_entity:
+        # Owner, 2026-11-04: after "কোথায় ব্যথা?" / "কোথায় অ্যালার্জি?" the answer ("পায়ে", "চামড়ায়", "নাকে") plus the word of the complaint is routed like any symptom: department, then the doctors.
+        session.pending_location = None
+        _word = {"pain": {"bn": "ব্যথা", "hi": "दर्द", "en": "pain"}, "allergy": {"bn": "অ্যালার্জি", "hi": "एलर्जी", "en": "allergy"}}[_pl["kind"]][lang if lang in ("bn", "hi") else "en"]
+        _combined = f"{text.strip(' ?.,।')} {_word}"
+        with contextlib.suppress(ToolCallError):
+            _lr = await _route_dept(_combined, lang, session)
+            if _lr.get("matched"):
+                await _speak(session, _with_resume(session, await _route_reply(session, _lr, _combined, lang), lang), lang)
+                return
     early_pick = None
     if not confirmed_entity and session.booking is None and len(text.split()) <= 8 and _names_an_offered_doctor(session, text):
         # Owner, 2026-11-04 ("সিনহাকে করে দিন" after "কুণাল সিনহা, অভিজিৎ সরকার. কাকে দেখাতে চান?" was taken for the clinic's name): while a question about the doctors just offered is open, an answer that names
@@ -7548,6 +7567,9 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             intent = "department_query"
             slots = {**slots, "symptom_description": text}
             data = {**data, "intent": intent, "slots": slots}
+        elif routed.get("needs_location"):
+            await _speak(session, location_question(routed["needs_location"], lang), lang)
+            return
 
     # Real call 2026-10-17: after "Dr Sen does not sit that day; next: 18 October", "ঠিক আছে ওই দিন আমার একটা বুকিং দিন" was read as a LOOKUP of an
     # existing booking ("from which number did you book?") and the phone digits then fell to the greeting. A request to book, straight after

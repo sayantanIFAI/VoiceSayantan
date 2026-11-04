@@ -130,3 +130,31 @@ def test_a_word_that_is_a_doctors_name_is_never_a_symptom_and_the_word_after_a_t
     assert lex.departments_for("আমাকে একটা ডেরমাটোলজিস্ট দেখাতে হবে", names) == ["Dermatology"]
     assert lex.departments_for("আমার ছেলের ছুলি হয়েছে", names) == ["Dermatology"]
     assert lex.departments_for("মূত্রের সমস্যা", names) == ["Urology"]
+
+
+# Owner, 2026-11-04: "byatha ache doctor dekhabo" / "allergyr doctor dekhabo" -- the kind of complaint is said, the place is not: the caller is asked WHERE, then it is routed.
+@pytest.mark.parametrize(
+    "text,kind",
+    [("byatha ache doctor dekhabo", "pain"), ("আমার ব্যথা আছে ডাক্তার দেখাবো", "pain"), ("allergyr doctor dekhabo", "allergy"), ("এলার্জির ডাক্তার দেখাবো", "allergy"), ("allergy hoyeche", "allergy")],
+)
+def test_pain_or_allergy_with_no_place_asks_where(text, kind):
+    assert lex.departments_for(text) == []
+    assert lex.vague_kind(text) == kind
+
+
+@pytest.mark.parametrize(
+    "text,dept",
+    [("চামড়ায় অ্যালার্জি", "Dermatology"), ("নাকে অ্যালার্জি", "ENT"), ("মাথা ব্যথা", "Neurology"), ("দাঁতে ব্যথা", "Dentistry")],
+)
+def test_the_place_decides_the_department(text, dept):
+    assert lex.vague_kind(text) is None
+    assert lex.departments_for(text) == [dept]
+
+
+def test_the_location_questions_are_recognised_when_the_agent_says_them():
+    from agent import reply_templates as rt
+
+    for kind in ("pain", "allergy"):
+        for lang in ("bn", "hi", "en"):
+            assert rt.location_kind_of(rt.location_question(kind, lang)) == kind
+    assert rt.location_kind_of("আজ কার্ডিওলজি বিভাগে") is None
