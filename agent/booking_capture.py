@@ -1590,7 +1590,7 @@ def name_change(text: str) -> str | None:
     return candidate_name(" ".join(left)) if left else None
 
 
-def before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan:
+def before_model(st, text: str, lang: str, window=None, today=None, agreement: float | None = None) -> TurnPlan:
     """The booking turn's deterministic reading (see _before_model), plus: an age said in the sentence is taken out first (so it is never read as a
     phone digit) and kept; a name spelled \"S for September, A for Alpha\" (or letter by letter) is read back for a yes."""
     text = nato_letters.collapse(text)
@@ -1641,7 +1641,50 @@ def before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan:
             name = spelled.title()
             st.pending_name = name
             plan.speak = readback(st, lang, "name", name)
+        elif asked_name and missing[0] == "patient_name" and "patient_name" in st.asked_fields and not (plan.digits or plan.phone or plan.time or plan.date or plan.age):
+            named = plain_name_answer(text, lang)
+            tries = int(st.slots.get("_name_tries") or 0)
+            floor = NAME_RULE_AGREEMENT if tries == 0 else NAME_RULE_AGREEMENT_RETRY  # the second try is let through on less: the caller is not asked a third time for what was heard well enough to read back
+            if named and (agreement is None or agreement >= floor):
+                st.slots.pop("_name_tries", None)
+                st.pending_name = named
+                plan.speak = readback(st, lang, "name", named)
+            else:
+                st.slots["_name_tries"] = tries + 1
     return plan
+
+
+# Owner, 2026-11-04 (call 99e76cf7: the patient's name, heard right three times, was asked for four times): the intent model does not treat a bare name as the answer to "what is the patient's name?" (it
+# answered repeat_last / smalltalk / department_query), and the booking waited for the model to fill patient_name. The caller's own words are the name, so when the name is the very next thing the booking
+# asks and the answer is a plain name, it is read back for a yes -- the same read-back every name gets -- without asking the model. The read-back is what makes it safe: a wrong word is a "no" away from
+# being corrected, and nothing is stored before the yes.
+NAME_RULE_AGREEMENT = 0.8  # the recogniser's own agreement needed on the first try
+NAME_RULE_AGREEMENT_RETRY = 0.5  # ...and on a repeated one
+# words that mean the caller is saying something ELSE (an acknowledgement, a question, a request): the sentence is left to the model as before
+_NOT_A_NAME_ANSWER = frozenset(
+    {
+        "বলুন", "আচ্ছা", "ঠিক", "আছে", "ওকে", "জি", "শুনুন", "একটু", "মিনিট", "বুঝলাম", "বুঝিনি", "কত", "কখন", "কোথায়", "কোন", "কে", "কেমন", "কীভাবে", "আমি", "আপনি", "আমার", "আপনার", "এই", "ওই",
+        "তাহলে", "তো", "বুক", "করুন", "করব", "করে", "করতে", "চাই", "লাগবে", "দিন", "নিন", "ডাক্তার", "ডাঃ", "বিভাগ", "টেস্ট", "রেট", "টাকা", "ঠিকানা", "বয়স", "ফোন", "নম্বর", "নাম", "নামটা", "বলছি", "বলব",
+        "হয়েছে", "হয়", "হবে", "বসে", "বসবে", "বসবেন", "বসেন", "যাবে", "পারবেন", "পারি", "দেখান", "বলবেন", "বলে", "আর", "ও", "এ",
+        "okay", "ok", "sure", "fine", "one", "moment", "hold", "please", "sorry", "doctor", "test", "rate", "price", "address", "age", "number", "name", "my", "is", "the", "and", "can", "could", "tell", "ask",
+        "ठीक", "अच्छा", "बोलिए", "रुकिए", "एक", "मिनट", "कितना", "कब", "कहाँ", "कौन", "मैं", "आप", "मेरा", "नाम", "डॉक्टर", "टेस्ट", "रेट", "पता", "उम्र", "नंबर", "फोन",
+    }
+)
+
+
+def plain_name_answer(text: str, lang: str) -> str | None:
+    """The caller's words as a patient name, or None. A name is one to four plain words (candidate_name) that say nothing else: no yes / no, no question or booking word, no word from _NOT_A_NAME_ANSWER."""
+    raw = _bare_no(text)
+    if confirm_answer(raw, lang) is not None or read_digits(raw)[1]:
+        return None
+    from agent import off_topic  # local import: off_topic is a larger module this one does not otherwise need
+
+    named = candidate_name(raw)
+    if not named or off_topic.has_health_word(raw):  # a symptom said at the name question ("আমার ডেঙ্গু হয়েছে") is an answer to something else
+        return None
+    if any(w.strip(".,").lower() in _NOT_A_NAME_ANSWER for w in named.split()):
+        return None
+    return named
 
 
 _PHONE_WORD = ("নম্ব", "নাম্ব", "ফোন", "মোবাইল", "number", "phone", "mobile", "नंबर", "फोन", "मोबाइल")

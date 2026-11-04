@@ -2316,6 +2316,18 @@ def _dialogue_snapshot_raw(session: CallSession, lang: str = "bn") -> dict:
     return snap
 
 
+def _answers_a_booking_detail(session: CallSession, lang: str) -> bool:
+    """Owner, 2026-11-04 (call 99e76cf7): the answer to "what is the patient's name / age / address?" is the CALLER's own detail, and what the model made of one name was served from the saved-answer
+    cache for the next, different name ("জয়ন্তী", "জয়ন্ত" after "গায়ন্ত"), so the same miss repeated. While the booking is waiting for such a detail the cache is neither read nor written."""
+    try:
+        if str(_dialogue_snapshot(session, lang).get("open_question") or "").startswith("the booking's"):
+            return True
+        b = session.booking  # the age, address and police station are asked after the required fields, so the snapshot does not name them: the booking's own record of what it asked does
+        return bool(b is not None and b.stage == "collecting" and any(f in b.asked_fields and not b.slots.get(f) for f in ("patient_name", "patient_age", "patient_address", "police_station")))
+    except Exception:  # noqa: BLE001 - advisory
+        return False
+
+
 async def _resolve_intent_uncached(session: CallSession, text: str, lang: str, key: str) -> dict:
     """Tier 2 (semantic cache) + tier 3 (LLM), run AFTER fast_path already
     abstained. Split out from _resolve_intent so the filler race below can
@@ -2332,7 +2344,12 @@ async def _resolve_intent_uncached(session: CallSession, text: str, lang: str, k
     # short head start; if it has not answered by then the model starts anyway and the lookup keeps going. A hit ends
     # the wait at once and the model's answer is dropped; a miss costs the model turn nothing. Measured on the pod, the
     # serial version spent up to 1.5 s waiting for a lookup that then missed, before the 1.3 s model call even began.
-    lookup = asyncio.ensure_future(asyncio.to_thread(_intent_cache.get, key))
+    no_cache = _answers_a_booking_detail(session, lang)
+
+    async def _not_cached():
+        return None, "bypassed"
+
+    lookup = asyncio.ensure_future(_not_cached() if no_cache else asyncio.to_thread(_intent_cache.get, key))
     lookup.add_done_callback(lambda f: f.cancelled() or f.exception())  # a failed lookup is a miss, never an error
     try:
         cached, how = await asyncio.wait_for(
@@ -2365,8 +2382,9 @@ async def _resolve_intent_uncached(session: CallSession, text: str, lang: str, k
                 _pdata = await asyncio.wait_for(asyncio.shield(pre["task"]), timeout=max(0.05, left()))
                 if isinstance(_pdata, dict) and _pdata:
                     logger.info("[%s] preemptive intent used: the model had already read this sentence", session.call_id)
-                    _saved = asyncio.ensure_future(asyncio.to_thread(_intent_cache.put, key, _pdata))
-                    _saved.add_done_callback(lambda f: f.cancelled() or f.exception())
+                    if not no_cache:
+                        _saved = asyncio.ensure_future(asyncio.to_thread(_intent_cache.put, key, _pdata))
+                        _saved.add_done_callback(lambda f: f.cancelled() or f.exception())
                     return _pdata
         else:
             logger.info("[%s] preemptive intent not used: the sentence read early (%r) is not the final one (%r)", session.call_id, pre.get("key"), key)
@@ -2396,8 +2414,9 @@ async def _resolve_intent_uncached(session: CallSession, text: str, lang: str, k
     )
     # Owner, 2026-10-27 (real call, pod log): saving the answer to the semantic cache needs a bge-m3 embedding, and on one turn that embedding took 5.8 s (the Ollama log shows it), which
     # the caller waited for although the save only helps LATER turns. It now runs in the background: a failure or a slow embedding costs nothing on this turn.
-    saved = asyncio.ensure_future(asyncio.to_thread(_intent_cache.put, key, data))
-    saved.add_done_callback(lambda f: f.cancelled() or f.exception())
+    if not no_cache:
+        saved = asyncio.ensure_future(asyncio.to_thread(_intent_cache.put, key, data))
+        saved.add_done_callback(lambda f: f.cancelled() or f.exception())
     return data
 
 
@@ -7331,7 +7350,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         chamber_window = await _chamber_window(session, text)
         await _check_police_station_answer(session, text)
         await _check_address_answer(session, text)
-        capture_plan = booking_capture.before_model(session.booking, text, lang, window=chamber_window)
+        capture_plan = booking_capture.before_model(session.booking, text, lang, window=chamber_window, agreement=getattr(asr_result, "decoder_agreement", None))
         if capture_plan.speak:
             await _speak(session, capture_plan.speak, lang)
             return
