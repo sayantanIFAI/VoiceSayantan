@@ -7781,6 +7781,14 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                 _said_day = booking_capture.read_when(text, False, want_day=True).date
                 if _said_day and _said_day >= slot_proposal.clinic_now().date().isoformat():
                     slots = {**(slots or {}), "date": _said_day}
+            # Owner, 2026-11-04 ("সামনের শনিবার আসছে শনিবার ... শনিবার দিন বিকালবেলা", said on Wednesday 4 November: "দশ তারিখে ডাক্তার বসেন না" -- the model had worked out the 10th, which is not even a Saturday):
+            # a WEEKDAY named in the sentence is the day, worked out by the code from today's date and the word (agent/weekday_cues.py: the coming such day, "next week" when said), whatever date the
+            # model wrote. Used when no calendar date was said in words (a said date, handled above, wins).
+            if weekday_cues.weekday_of(text) is not None and not booking_capture.read_when(text, False, want_day=True).date:
+                _wd_said = weekday_cues.resolve_date(text, slot_proposal.clinic_now().date())
+                if _wd_said and _wd_said >= slot_proposal.clinic_now().date().isoformat() and (slots or {}).get("date") != _wd_said:
+                    logger.info("[%s] the weekday said gives %s; the model's date %s is replaced", session.call_id, _wd_said, (slots or {}).get("date"))
+                    slots = {**(slots or {}), "date": _wd_said}
             # Owner, 2026-10-29 ("তাহলে বুধবারে করে দিন উনার"): a weekday named for the doctor just discussed is first ANSWERED -- does she sit on that weekday? if not, when does she -- from the schedule
             # table; the booking then goes on from that answer. It used to be replaced silently by another date ("ঠিক আছে, মজুমদার", then the 31st).
             if session.booking is None and _tools is not None and weekday_cues.weekday_of(text) is not None:
@@ -8256,6 +8264,15 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             await _speak(session, _with_resume(session, resend_reply(result, lang), lang), lang)
 
         elif intent == "department_query":
+            # Owner, 2026-11-04: "বুকের ডাক্তার কে আছে ... সামনের শনিবার ... বিকালবেলা" was answered with every cardiologist's name. When the caller names a DAY (a weekday, a date, tomorrow) or a PART OF THE DAY, the
+            # answer is who sits THEN and still has a free slot (and, if nobody does, who sits next) -- worked out by the code from the date asked, never read off the department's whole list.
+            if _tools is not None and (
+                weekday_cues.weekday_of(text) is not None or doctor_search.asked_part_of_day(text) or booking_capture.read_when(text, False, want_day=True).date
+            ):
+                with contextlib.suppress(ToolCallError):
+                    _dq_routed = await _route_dept(str(slots.get("symptom_description") or text), lang, session)
+                    if _dq_routed.get("matched") and await _day_part_sitting_reply(session, text, lang, _dq_routed["department_name"]):
+                        return
             reply = await _answer_enquiry_intent(intent, slots, lang)
             if reply is None:
                 # KCD-lead-3: a real "which department/symptom?" question, same courtesy and the same
