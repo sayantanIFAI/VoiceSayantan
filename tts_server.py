@@ -57,7 +57,7 @@ import threading
 # Pure prosody logic (splitting, pauses, trim, normalise) lives in
 # agent/prosody.py so it can be unit tested without a GPU; the repo root is
 # on PYTHONPATH (deploy/env.sh). Imported BEFORE the chdir below.
-from agent import whatsapp_tts
+from agent import clip_conditioning, whatsapp_tts
 from agent.prosody import (
     ProsodyParams, assemble, resolve_length_scale, resolve_params, split_for_prosody,
 )
@@ -140,6 +140,9 @@ def _load_wa_clip() -> tuple[np.ndarray, int] | None:
     data, sr = sf.read(_WA_CLIP_PATH, dtype="float32")
     if data.ndim > 1:
         data = data.mean(axis=1)
+    # Owner, 2026-11-04 ("it crackles and hisses"): the recording has 13-16 dB more energy above 6 kHz than the Bengali voice, and its "ts" burst is spiky (agent/clip_conditioning.py). Low-passed and
+    # faded at both ends, once, here. TTS_WHATSAPP_LOWPASS_HZ=0 and TTS_WHATSAPP_FADE_S=0 give the recording exactly as it was.
+    data = clip_conditioning.condition(data, int(sr), float(os.environ.get("TTS_WHATSAPP_LOWPASS_HZ", "4500")), float(os.environ.get("TTS_WHATSAPP_FADE_S", "0.008")))
     return data, int(sr)
 
 

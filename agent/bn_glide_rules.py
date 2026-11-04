@@ -48,7 +48,7 @@ def _swap(pattern: str, repl: str | Callable) -> Callable[[str], str]:
 #  coda          য় at the end of a syllable, after a consonant: হয়-like সময়, বয়স, পয়সা, জয়, রায়-less.   "oi": C+ো+ই (the listener's সময়টা -> শমোইটা)   "i": C+ই
 #  before_vowel  য় between a consonant and a vowel sign: কয়েক, দয়া, হয়েছে.                                "sep": the vowel written out (listener's কয়এক)   "iy": ইয় (কইয়েক)
 #  after_i       য় after ি / ী: নিয়ে, দিয়ে, পিছিয়ে.                                                        "iiy": an ই before it (the listener's নিইয়ে)
-#  after_aa_o    য় after া / ো: যায়, মাথায়, কোথায়, গায়ে.                                                    "i": য়->ই, or an ই before the য় when a vowel sign follows
+#  after_aa_o    য় after া / ো / ে: যায়, মাথায়, গায়ে, মেয়ে, দেয়.                                                 "i": য়->ই, or an ই before the য় when a vowel sign follows
 #  owa           ওয়া: নেওয়া, যাওয়া, পাওয়া, দেওয়া.                                                          "oa": ওআ (the listener's নেওআ)   "waa": ওয়াা (the listener's যাওয়াা)
 #  ra            ড়/ঢ় after া: সাড়া, বাড়ি, গাড়ি, ছাড়া.                                                      "nasal": ঁ after the া (the listener's শাঁড়া)   "r": ড়->র
 VARIANTS: dict[str, dict[str, Callable[[str], str]]] = {
@@ -61,7 +61,7 @@ VARIANTS: dict[str, dict[str, Callable[[str], str]]] = {
     },
     "after_aa_o": {
         "i": _swap(
-            "([াো])" + _Y + "(" + _SIGN + ")?", lambda m: m.group(1) + "ই" + (_Y + m.group(2) if m.group(2) else "")
+            "([াোে])" + _Y + "(" + _SIGN + ")?", lambda m: m.group(1) + "ই" + (_Y + m.group(2) if m.group(2) else "")
         ),
     },
     "before_vowel": {
@@ -99,13 +99,13 @@ def active() -> dict[str, str]:
     return chosen
 
 
-def rewrite(word: str, rules: dict[str, str] | None = None) -> str:
+def rewrite(word: str, rules: dict[str, str] | None = None, force: bool = False) -> str:
     """The word with the chosen variant of every class applied (the word itself when none is chosen or it must be left alone)."""
     rules = active() if rules is None else rules
     if not rules:
         return word
     w = unicodedata.normalize("NFC", word)
-    if w in LEAVE_ALONE:
+    if w in LEAVE_ALONE and not force:  # force: for a listening pack that must hear the rule on a protected word too
         return word
     out = w
     for cls in _ORDER:
