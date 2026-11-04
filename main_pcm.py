@@ -3766,7 +3766,7 @@ async def _offer_department_alternatives(session: CallSession, st, lang: str, da
     alternatives = (info or {}).get("alternatives") or []
     if not alternatives:
         return False
-    doctor = _bare_doctor_name(doctor_name)
+    doctor = _bare_doctor_name((info or {}).get("doctor_name_spoken") or doctor_name)  # the spoken (Bengali / Hindi script) name, never the Latin one a Bengali voice cannot say
     names = [_bare_doctor_name(a["name"]) for a in alternatives if a.get("name")]
     if not names:
         return False

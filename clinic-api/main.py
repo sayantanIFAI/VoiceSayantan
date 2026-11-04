@@ -1645,6 +1645,8 @@ def doctor_department_alternatives(name: str = Query(...), date: str = Query(...
         "found": True,
         "department_name": dept.name if dept else None,
         "date": date,
+        # the caller's own doctor as the call's voice can say him (owner, 2026-11-04: "Kunal Sinha-এর" -- a Bengali voice cannot say English letters)
+        "doctor_name_spoken": bs._doctor_spoken_name(doctor, lang),  # noqa: SLF001
         "alternatives": bs.doctors_with_free_slots(db, doctor.department_id, date, lang, exclude_doctor_id=doctor.id),
     }
 
