@@ -5596,6 +5596,10 @@ async def _answer_write_name(session: CallSession, text: str, lang: str) -> bool
         if routed.get("matched"):
             await _speak(session, _with_resume(session, await _route_reply(session, routed, text, lang), lang), lang)
             return True
+        if routed.get("needs_location"):
+            # Owner, 2026-11-04 ("ওর ব্যথা আছে ডাক্তারের নাম লেখাবো" was asked "which doctor?"): pain or allergy with no place is asked WHERE first, also beside "write my name".
+            await _speak(session, location_question(routed["needs_location"], lang), lang)
+            return True
     if booking is not None and booking.stage in ("confirming", "awaiting_charge_confirm"):
         return False  # a yes / no to the read-back is being waited for
     when = booking_capture.read_when(text, False, want_day=True)
@@ -7168,6 +7172,15 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         return
 
 
+def _restates_complaint_over_offer(session: CallSession, text: str, lang: str) -> bool:
+    """Owner, 2026-11-04 ("বুক করব?" answered "আমার ব্যথা আছে ডাক্তার দেখাবো" moved on to the WhatsApp question as if it were a yes): while a single doctor is offered, a sentence that names
+    the complaint again and holds no yes or no is NOT the answer to the offer -- it is the complaint, and the place is asked."""
+    pend = getattr(session, "dept_pending", None)
+    if not pend or pend.get("kind") != "confirm_one" or session.turn_count - pend.get("turn", -99) > 3:
+        return False
+    return booking_capture.confirm_answer(text, lang) not in ("yes", "no")
+
+
 async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_result) -> None:
     """Resolve this utterance's content and speak the answer -- the SAME logic a normal turn uses
     after every early-return special case (booking confirmation, pending entity, disclosure, etc.) has
@@ -7221,13 +7234,14 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         and _tools is not None
         and len(text.split()) <= 12
         and _VAGUE_COMPLAINT_WORD.search(text)
-        and getattr(session, "dept_pending", None) is None
+        and (getattr(session, "dept_pending", None) is None or _restates_complaint_over_offer(session, text, lang))
     ):
         # Owner, 2026-11-04 ("byatha ache doctor dekhabo", "bhythar doctor dekhabo", "allergyr doctor dekhabo": pain or allergy, no place): asked WHERE before anything else reads the sentence -- it used to be
         # taken for a department lookup (General Medicine by default) or "allergyr" for a doctor's name. The clinic's route says so (needs_location); the answer is routed in the next turn.
         with contextlib.suppress(ToolCallError):
             _vr = await _route_dept(text, lang, session)
             if _vr.get("needs_location"):
+                session.dept_pending = None  # the doctor offered a moment ago was for a complaint that turned out to have no place: the offer is withdrawn
                 await _speak(session, location_question(_vr["needs_location"], lang), lang)
                 return
     early_pick = None

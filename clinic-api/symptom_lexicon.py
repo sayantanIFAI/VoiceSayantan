@@ -250,13 +250,31 @@ def _sound_index() -> dict[str, list[tuple[str, float]]]:
     return _SOUND
 
 
+_VAGUE_WORDS: frozenset[str] | None = None
+
+
+def _vague_words() -> frozenset[str]:
+    """The folded words of every VAGUE term (pain, allergy): the words that name a kind of complaint and no place."""
+    global _VAGUE_WORDS
+    if _VAGUE_WORDS is None:
+        _VAGUE_WORDS = frozenset(w for terms in VAGUE.values() for t in terms for w in _words(t))
+    return _VAGUE_WORDS
+
+
+def _near_complaint(*words: str) -> bool:
+    """True when any of the words is (an ordinary ending of) a word that names the kind of complaint."""
+    return any(_word_meets(fold(w), v) == 2 for w in words for v in _vague_words())
+
+
 def _sound_hits(text: str, names: frozenset[str] = frozenset()) -> dict[str, float]:
     """department -> weight for every word of the sentence (and every two neighbouring words run together: "derma tologist") that SOUNDS like a specialist's name: the same fold, or (a long fold only) one
     class dropped or added."""
     out: dict[str, float] = {}
     idx = _sound_index()
     toks = [t for t in _TOKEN.findall(text or "") if fold(t) not in names]
-    cands = list(toks) + [a + b for a, b in zip(toks, toks[1:])]
+    # Owner, 2026-11-04 ("ব্যথা ব্যথার জন্য" went to the Paediatrics doctor): "ব্যথার" + "জন্য" run together sounded like a specialist's name. A word that names the KIND of complaint (pain, allergy) is
+    # never part of a specialist's name, so neither it nor a pair containing it is a candidate.
+    cands = [t for t in toks if not _near_complaint(t)] + [a + b for a, b in zip(toks, toks[1:]) if not _near_complaint(a, b)]
     for tok in cands:
         k = phonetic_key(tok)
         if len(k) < _SOUND_MIN_CLASSES:
