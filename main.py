@@ -129,7 +129,7 @@ from agent.code_switch import mixture_bucket
 from agent.conditioning import condition as condition_audio
 from agent.confidence_gate import LOW as _CONF_LOW, VERIFIED, confidence_state, is_low_confidence
 from agent import asr_refine
-from agent.detector_budget import run_within_budget
+from agent.detector_budget import finish_within_budget, run_within_budget, start_detector
 from agent.distress import DistressEvidence, asks_for_person
 from agent.detector_budget import snapshot as detector_budget_snapshot
 from agent.disclosure import disclosure_for
@@ -409,7 +409,7 @@ FILLER_MIN_WAIT_S = float(os.environ.get("FILLER_MIN_WAIT_S", "0.25"))
 # alone is 1.0 s) so it is felt as a beat, not a delay; never applied to a filler utterance, which
 # exists specifically to cover a SLOW turn and must not be slowed down further itself.
 NATURAL_PAUSE_ENABLED = os.environ.get("NATURAL_PAUSE_ENABLED", "1") == "1"
-NATURAL_PAUSE_S = float(os.environ.get("NATURAL_PAUSE_S", "0.15"))
+NATURAL_PAUSE_S = float(os.environ.get("NATURAL_PAUSE_S", "0.05"))  # 2026-11-04: was 0.15 s, which sat inside every first-audio time
 
 # OWNER'S INSTRUCTION, 2026-09-25: when the caller says nothing for this long after the agent finished speaking, ask
 # once whether there is anything else (the call ends if not); if there is still nothing after SILENCE_CLOSE_S, end it.
@@ -6498,6 +6498,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         session.silence_since = None
         session.turn_started_at = time.monotonic()
         session.marks = [("start", session.turn_started_at)]
+        session.api0 = (tools_client.API_STATS["calls"], tools_client.API_STATS["ms"])  # the clinic-API calls of this turn are counted from here (_mark only sets this when the list is empty, and it never is: "start" is in it)
         channel_quality = session.call_state.channel_quality
         analysis: dict | None = None
         audio_issues: list[str] = []
@@ -6518,6 +6519,9 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                     asr_wav = conditioned
             _mark(session, "prep")
             _keep_recent_utterance(session, utterance_wav)
+            # Owner's latency review, 2026-11-04: the two clip analyses read only the clip, not the transcript, so they run while the recognisers work (they used to wait until recognition was over).
+            _quality_job = start_detector(_classify_channel_from_wav_path, utterance_wav)
+            _analysis_job = start_detector(_analyze_utterance_from_wav_path, utterance_wav)
             lang, asr_result, lang_decisive = await _route_and_transcribe(session, asr_wav)
             logger.info("[%s] heard (%s, %s, agreement %.2f): %r", session.call_id, lang, getattr(asr_result, "decoder_used", "?"),
                         float(getattr(asr_result, "decoder_agreement", 0.0) or 0.0), getattr(asr_result, "text", ""))
@@ -6526,22 +6530,10 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
             # the SAME clip ASR already read, before the finally below
             # deletes it. A slow or failed classification just keeps
             # last turn's label -- never blocks or fails the turn.
-            channel_quality = await run_within_budget(
-                "channel_quality",
-                CHANNEL_QUALITY_BUDGET_S,
-                _classify_channel_from_wav_path,
-                utterance_wav,
-                previous_value=channel_quality,
-            )
+            channel_quality = await finish_within_budget("channel_quality", _quality_job, CHANNEL_QUALITY_BUDGET_S, previous_value=channel_quality)
             # Why is this clip hard to hear, and does the speaker sound older?
             # A slow or failed analysis just means no verdict this turn.
-            analysis = await run_within_budget(
-                "audio_quality",
-                AUDIO_ANALYSIS_BUDGET_S,
-                _analyze_utterance_from_wav_path,
-                utterance_wav,
-                previous_value=None,
-            )
+            analysis = await finish_within_budget("audio_quality", _analysis_job, AUDIO_ANALYSIS_BUDGET_S, previous_value=None)
             audio_issues = analysis["audio"].issues if analysis else []
             for issue in audio_issues:
                 audio_issue_buckets.record(issue, "seen", lang or session.lang)
@@ -6558,6 +6550,7 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
                 audio_issues,
                 analysis["audio"].duration_s if analysis else None,
             )
+            _mark(session, "clip_checks")  # the clip analyses and the enhanced-audio retry: their own stage in the timing line, no longer hidden inside the next one
         except Exception as e:
             logger.exception("[%s] ASR/LID stage failed: %s", session.call_id, e)
             await _speak(session, phrase("llm_failure", session.lang), session.lang, fallback_reason="llm_failure")
@@ -7316,6 +7309,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                     return
                 await _speak(session, phrase("llm_failure", lang), lang, fallback_reason="llm_failure")
                 return
+            _mark(session, "resolve")  # fast path, cache or model finished: from here to "intent" is the rules that re-read the answer
 
     data = _name_answer_repair(session, text, data)
     data = _lock_doctor_name_during_name_capture(session, data, text)

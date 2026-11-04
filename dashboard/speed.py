@@ -45,7 +45,7 @@ CONFIGURED_WAITS = (
     ("Silence otherwise", 2.0, "TURN_SILENCE_CONFIRM_S"),
     ("Silence after an unfinished-looking sentence", 3.5, "ENDPOINT_INCOMPLETE_S"),
     ("Newest audio never trusted as silence", 0.3, "TURN_TAIL_GUARD_S"),
-    ("Pause before the first reply of a turn", 0.15, "NATURAL_PAUSE_S"),
+    ("Pause before the first reply of a turn", 0.05, "NATURAL_PAUSE_S"),
     ('"Please hold" filler after this much silence', 1.0, "FILLER_THRESHOLD_S"),
 )
 

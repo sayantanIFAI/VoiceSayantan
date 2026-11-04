@@ -69,6 +69,35 @@ async def run_within_budget(
     return result
 
 
+def start_detector(fn: Callable[..., T], *args, **kwargs) -> tuple[asyncio.Future, float]:
+    """Begin `fn` in a worker thread NOW and hand back (future, start time) for finish_within_budget. For a detector that needs only the
+    audio and so can run while the recogniser is busy, instead of after it. A failure nobody awaits is not an error."""
+    fut = asyncio.ensure_future(asyncio.to_thread(fn, *args, **kwargs))
+    fut.add_done_callback(lambda f: f.cancelled() or f.exception())
+    return fut, time.monotonic()
+
+
+async def finish_within_budget(
+    name: str, started: tuple[asyncio.Future, float], budget_s: float, previous_value: T | None = None
+) -> T | None:
+    """The result of a detector begun with start_detector, waiting at most `budget_s` FROM NOW (not from when it began: the time it spent running
+    beside the recogniser is free). Past that, `previous_value`, exactly as run_within_budget. A failure of `fn` is raised, as there."""
+    fut, t0 = started
+    try:
+        result = await asyncio.wait_for(asyncio.shield(fut), timeout=budget_s)
+    except TimeoutError:
+        _OVER_BUDGET_COUNTS[name] += 1
+        logger.warning(
+            "detector %s exceeded its %.3fs budget (still running after %.3fs) -- degrading to previous value",
+            name,
+            budget_s,
+            time.monotonic() - t0,
+        )
+        return previous_value
+    _TIMINGS[name].append(time.monotonic() - t0)
+    return result
+
+
 def snapshot() -> dict:
     out = {}
     for name, samples in _TIMINGS.items():
