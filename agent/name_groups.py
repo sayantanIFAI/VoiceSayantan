@@ -39,7 +39,10 @@ def _same(a: str, b: str) -> bool:
     return len(name_script.name_skeleton(a)) >= 2 and len(name_script.name_skeleton(b)) >= 2 and name_script.same_given_name(a, b)
 
 
-_STRICT_FOLD = str.maketrans({"ী": "ি", "ূ": "ু", "শ": "স", "ষ": "স", "ণ": "ন", "ৎ": "ত", "ঈ": "ই", "ঊ": "উ", "ী": "ি", "ू": "ु", "ी": "ि", "श": "स", "ष": "स", "ण": "न"})
+_STRICT_FOLD = {  # long = short vowel; the three s sounds; ণ = ন; ৎ = ত (Bengali, then the same in Devanagari) -- by code point, so no look-alike can slip in
+    0x09C0: 0x09BF, 0x09C2: 0x09C1, 0x0988: 0x0987, 0x098A: 0x0989, 0x09B6: 0x09B8, 0x09B7: 0x09B8, 0x09A3: 0x09A8, 0x09CE: 0x09A4,
+    0x0940: 0x093F, 0x0942: 0x0941, 0x0908: 0x0907, 0x090A: 0x0909, 0x0936: 0x0938, 0x0937: 0x0938, 0x0923: 0x0928,
+}
 
 
 def exact_given(a: str, b: str) -> bool:
@@ -72,12 +75,19 @@ def ending_variant(a: str, b: str) -> bool:
     if na == nb or not na or not nb:
         return False
     short, long_ = (na, nb) if len(na) <= len(nb) else (nb, na)
-    return long_.startswith(short) and long_[len(short):] in ("ি", "া", "ো", "ে", "ি", "ী", "ু", "ঁ", "ই", "ও")
+    _ENDINGS = {chr(c) for c in (0x09BF, 0x09BE, 0x09CB, 0x09C7, 0x09C1, 0x0981, 0x0987, 0x0993, 0x093F, 0x093E, 0x094B, 0x0947, 0x0941, 0x0907, 0x0913)}  # vowel signs / vowels put on the end (Bengali, Devanagari)
+    return long_.startswith(short) and long_[len(short):] in _ENDINGS
 
 
 def sounds_like_given(a: str, b: str) -> bool:
     """The same first name as heard (by sound -- "মানুষ" for মানস), but never a name with another ending."""
     return _same(a, b) and not ending_variant(a, b)
+
+
+def given_matches(said: str, givens: list[str]) -> bool:
+    """`said` is one of a doctor's first names -- as heard (by sound), in whichever script -- and is NOT that name with another ending in ANY of the spellings the doctor is written in (the Bengali spelling
+    "মানস" refuses "মানসী" even when the Hindi / Latin spellings alone could not tell them apart)."""
+    return any(sounds_like_given(said, g) for g in givens) and not any(ending_variant(said, g) for g in givens)
 
 
 def _same_sound(a: str, b: str) -> bool:

@@ -5557,7 +5557,7 @@ def _first_and_surname_of_two_doctors(said: str) -> bool:
             return False
         for info in _fast_path.catalogue._doctor_info.values():  # noqa: SLF001
             given, sur = name_groups._own_names(info)  # noqa: SLF001
-            if any(name_groups.sounds_like_given(toks[0], g) for g in given) and any(name_groups._same(toks[-1], x) for x in sur):  # noqa: SLF001
+            if any(name_groups.sounds_like_given(toks[0], g) for g in given) and not any(name_groups.ending_variant(toks[0], g) for g in given) and any(name_groups._same(toks[-1], x) for x in sur):  # noqa: SLF001
                 return False  # (2026-11-04: by sound, but not another ending -- মানুষ is মানস as heard, মানসী is not)
         return True
     return False
@@ -10366,7 +10366,7 @@ def _doctor_named_by_sound(text: str) -> dict | None:
             continue
         for info in infos:
             given, sur = name_groups._own_names(info)  # noqa: SLF001
-            if any(name_groups.sounds_like_given(a, g) for g in given) and any(name_groups._same(b, x) and abs(len(b) - len(x)) <= 2 for x in sur):  # noqa: SLF001
+            if name_groups.given_matches(a, given) and any(name_groups._same(b, x) and abs(len(b) - len(x)) <= 2 for x in sur):  # noqa: SLF001
                 found[id(info)] = info
     return next(iter(found.values())) if len(found) == 1 else None
 
@@ -10437,7 +10437,9 @@ async def _unknown_full_name_turn(session: CallSession, text: str, lang: str) ->
         a, b = toks[j - 1], toks[j]
         if a in _NAME_FILLER or b in _NAME_FILLER or len(name_script.name_skeleton(a)) < 2:
             continue
-        for cand in (_strip_genitive(b), b):  # the name without the "of" ending is what is said back
+        # (2026-11-04: "অমিত কুমার" was read back as "অমিত কুমা" -- a word that IS a surname as said (কুমার, সরকার, হালদার) is kept; only another word loses its "of" ending)
+        _b_is_surname = any(b.lower() == s_.lower() for s_ in surnames)
+        for cand in ((b, _strip_genitive(b)) if _b_is_surname else (_strip_genitive(b), b)):  # the name without the "of" ending is what is said back
             if any(name_groups._same(cand, s_) for s_ in surnames):  # noqa: SLF001
                 # Owner, 2026-11-03 ("অমর কান্তি পাল": the recogniser splits a first name in two): the name-like words right before the surname, up to two, are the first name
                 first = [a]

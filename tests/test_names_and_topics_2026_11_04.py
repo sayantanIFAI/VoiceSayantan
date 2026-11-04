@@ -63,3 +63,13 @@ def test_the_founding_year_is_asked_about(text):
 @pytest.mark.parametrize("text", ["ডাক্তার কত সালে পাস করেছেন", "চেম্বার কখন শুরু হয়", "আপনাদের ক্লিনিক কখন খোলা"])
 def test_other_questions_are_not_the_founding_year(text):
     assert not owner_answers.asks_founding_year(text)
+
+
+def test_manasi_is_not_manas_in_any_of_the_doctors_spellings():
+    # the doctor is written in Bengali, Hindi and Latin letters: the Bengali spelling's ending check must hold even though a cross-script comparison alone cannot see the ending
+    manas = next(r for r in ROWS if r["full_name"] == "Dr. Manas Dutta")
+    givens, _sur = name_groups._own_names(manas)
+    assert name_groups.given_matches("মানুষ", givens)  # as heard
+    assert name_groups.given_matches("মানস", givens)
+    assert not name_groups.given_matches("মানসী", givens)  # another name
+    assert not name_groups.given_matches("मानसी", givens)
