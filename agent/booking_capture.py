@@ -26,7 +26,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
-from agent import nato_letters, number_words, phonetic_match, spoken_codes, slot_grounding, whatsapp_cues
+from agent import name_ner, nato_letters, number_words, phonetic_match, spoken_codes, slot_grounding, whatsapp_cues
 from agent.digit_speech import spoken_digit_groups
 
 # ----------------------------------------------------------------------------------------------------------------- digits
@@ -1629,7 +1629,7 @@ def before_model(st, text: str, lang: str, window=None, today=None, agreement: f
         plan = TurnPlan()
         plan.speak = readback(st, lang, "age", age)  # "The patient's age is 22. Could you tell me the address?"
         return plan
-    plan = _before_model(st, text, lang, window=window, today=today)
+    plan = _before_model(st, text, lang, window=window, today=today, agreement=agreement)
     if age:
         plan.age = age
         if plan.skip_model:
@@ -1645,49 +1645,52 @@ def before_model(st, text: str, lang: str, window=None, today=None, agreement: f
             st.pending_name = name
             plan.speak = readback(st, lang, "name", name)
         elif asked_name and missing[0] == "patient_name" and "patient_name" in st.asked_fields and not (plan.digits or plan.phone or plan.time or plan.date or plan.age):
-            named = plain_name_answer(text, lang)
+            span = name_answer(text, lang)
             tries = int(st.slots.get("_name_tries") or 0)
-            floor = NAME_RULE_AGREEMENT if tries == 0 else NAME_RULE_AGREEMENT_RETRY  # the second try is let through on less: the caller is not asked a third time for what was heard well enough to read back
-            if named and (agreement is None or agreement >= floor):
+            if span is not None and (agreement is None or agreement >= _name_floor(span, tries)):  # the second try is let through on less: the caller is not asked a third time for what was heard well enough to read back
                 st.slots.pop("_name_tries", None)
-                st.pending_name = named
-                plan.speak = readback(st, lang, "name", named)
+                st.pending_name = span.name
+                plan.speak = readback(st, lang, "name", span.name)
             else:
                 st.slots["_name_tries"] = tries + 1
     return plan
 
 
 # Owner, 2026-11-04 (call 99e76cf7: the patient's name, heard right three times, was asked for four times): the intent model does not treat a bare name as the answer to "what is the patient's name?" (it
-# answered repeat_last / smalltalk / department_query), and the booking waited for the model to fill patient_name. The caller's own words are the name, so when the name is the very next thing the booking
+# answered repeat_last / smalltalk / department_query), and the booking waited for it to fill patient_name. The caller's own words are the name, so when the name is the very next thing the booking
 # asks and the answer is a plain name, it is read back for a yes -- the same read-back every name gets -- without asking the model. The read-back is what makes it safe: a wrong word is a "no" away from
-# being corrected, and nothing is stored before the yes.
-NAME_RULE_AGREEMENT = 0.8  # the recogniser's own agreement needed on the first try
+# being corrected, and nothing is stored before the yes. Which words ARE the name is decided by agent/name_ner.py (call 3fa23f68: a correction, a mumble and an English misreading were each read back as the
+# name): the filler words around it are removed, a sentence about something else is no name, and a name the reply voice cannot say is not read back.
+NAME_RULE_AGREEMENT = 0.8  # the recogniser's own agreement needed on the first try for a name nothing vouches for
 NAME_RULE_AGREEMENT_RETRY = 0.5  # ...and on a repeated one
-# words that mean the caller is saying something ELSE (an acknowledgement, a question, a request): the sentence is left to the model as before
-_NOT_A_NAME_ANSWER = frozenset(
-    {
-        "বলুন", "আচ্ছা", "ঠিক", "আছে", "ওকে", "জি", "শুনুন", "একটু", "মিনিট", "বুঝলাম", "বুঝিনি", "কত", "কখন", "কোথায়", "কোন", "কে", "কেমন", "কীভাবে", "আমি", "আপনি", "আমার", "আপনার", "এই", "ওই",
-        "তাহলে", "তো", "বুক", "করুন", "করব", "করে", "করতে", "চাই", "লাগবে", "দিন", "নিন", "ডাক্তার", "ডাঃ", "বিভাগ", "টেস্ট", "রেট", "টাকা", "ঠিকানা", "বয়স", "ফোন", "নম্বর", "নাম", "নামটা", "বলছি", "বলব",
-        "হয়েছে", "হয়", "হবে", "বসে", "বসবে", "বসবেন", "বসেন", "যাবে", "পারবেন", "পারি", "দেখান", "বলবেন", "বলে", "আর", "ও", "এ",
-        "okay", "ok", "sure", "fine", "one", "moment", "hold", "please", "sorry", "doctor", "test", "rate", "price", "address", "age", "number", "name", "my", "is", "the", "and", "can", "could", "tell", "ask",
-        "ठीक", "अच्छा", "बोलिए", "रुकिए", "एक", "मिनट", "कितना", "कब", "कहाँ", "कौन", "मैं", "आप", "मेरा", "नाम", "डॉक्टर", "टेस्ट", "रेट", "पता", "उम्र", "नंबर", "फोन",
-    }
-)
+NAME_RULE_AGREEMENT_KNOWN = 0.6  # ...a name introduced as one ("আমার নাম ...") or made of known name words needs a little less
+NAME_RULE_AGREEMENT_KNOWN_RETRY = 0.3
+
+
+def _name_floor(span, tries: int) -> float:
+    if span.confidence == "high":
+        return NAME_RULE_AGREEMENT_KNOWN if tries == 0 else NAME_RULE_AGREEMENT_KNOWN_RETRY
+    return NAME_RULE_AGREEMENT if tries == 0 else NAME_RULE_AGREEMENT_RETRY
+
+
+def name_answer(text: str, lang: str):
+    """The patient's name in the caller's words as an agent.name_ner.NameSpan the reply voice can say back, or None."""
+    span = name_ner.extract_name(_bare_no(text))
+    return span if span is not None and name_ner.speakable_in(span.name, lang) else None
 
 
 def plain_name_answer(text: str, lang: str) -> str | None:
-    """The caller's words as a patient name, or None. A name is one to four plain words (candidate_name) that say nothing else: no yes / no, no question or booking word, no word from _NOT_A_NAME_ANSWER."""
-    raw = _bare_no(text)
-    if confirm_answer(raw, lang) is not None or read_digits(raw)[1]:
-        return None
-    from agent import off_topic  # local import: off_topic is a larger module this one does not otherwise need
+    """The caller's words as a patient name (the name only), or None."""
+    span = name_answer(text, lang)
+    return span.name if span is not None else None
 
-    named = candidate_name(raw)
-    if not named or off_topic.has_health_word(raw):  # a symptom said at the name question ("আমার ডেঙ্গু হয়েছে") is an answer to something else
+
+def corrected_name(text: str, lang: str, agreement: float | None) -> str | None:
+    """The name in a caller's reaction to a name read back ("no, it is Rahul Das"), or None. Taken only when it was heard well enough: a mumble (agreement 0.0) is not read back as the name."""
+    span = name_answer(text, lang)
+    if span is None or (agreement is not None and agreement < _name_floor(span, 1)):
         return None
-    if any(w.strip(".,").lower() in _NOT_A_NAME_ANSWER for w in named.split()):
-        return None
-    return named
+    return span.name
 
 
 _PHONE_WORD = ("নম্ব", "নাম্ব", "ফোন", "মোবাইল", "number", "phone", "mobile", "नंबर", "फोन", "मोबाइल")
@@ -1829,7 +1832,7 @@ def answers_asked_detail(st, text: str) -> bool:
     return False
 
 
-def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan:
+def _before_model(st, text: str, lang: str, window=None, today=None, agreement: float | None = None) -> TurnPlan:
     """Everything the caller's words settle by themselves, decided before the model is asked. `window` = the doctor's chamber
     hours on the booking date as [(start_min, end_min)] when known (to read a bare "ten" as the daytime hour)."""
     from agent.booking_flow import classify_yes_no, missing_required  # local import: booking_flow does not import this module
@@ -1872,11 +1875,13 @@ def _before_model(st, text: str, lang: str, window=None, today=None) -> TurnPlan
     if st.pending_name:
         answer = confirm_answer(text, lang)
         digits_said = read_digits(text)[1]
-        named = candidate_name(_bare_no(text)) if answer in (None, "no") else None
+        named = corrected_name(text, lang, agreement) if answer in (None, "no") else None
         if answer == "no":
             st.pending_name = None
             if not named:
                 named = _name_after_correction(text)
+                if named and not name_ner.speakable_in(named, lang):
+                    named = None  # a name the voice cannot say back is asked for again, never read back (call 3fa23f68: "Who Was")
             if named:
                 st.pending_name = named
                 plan.speak = readback(st, lang, "name", named)
