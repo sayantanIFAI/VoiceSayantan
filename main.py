@@ -10909,6 +10909,10 @@ async def _dept_talk_turn(session: CallSession, text: str, lang: str) -> bool:
     languages; the department stays the subject. Nothing here is a guess about a person: the doctors are the clinic's own rows, and a name is matched only among the department's doctors."""
     if _fast_path is None or _tools is None or _booking_open(session) or len(text.split()) > 30 or _names_offered_doctor(session, text):
         return False
+    # Owner, 2026-11-04 ("মানস দত্ত না মানসী দত্ত মানসী দত্ত স্কিন এর ডাক্তার আছে বসে" was answered "হ্যাঁ, বসেন।": the department word answered, the PERSON asked about was ignored): a full name that no doctor
+    # carries is answered first -- "X নামে কেউ বসেন না", then the close names -- whatever department word is in the sentence.
+    if await _unknown_full_name_turn(session, text, lang):
+        return True
     if await _unknown_title_name_turn(session, text, lang):
         return True
     # the answer to "are you asking about Dr. X?" asked a moment ago
