@@ -4392,6 +4392,13 @@ async def _next_sitting_offer(dept: str, label: str, lang: str) -> dict | None:
 _PICK_MEMORY_TURNS = 10**6
 
 
+# the words of a complaint that names its KIND (pain, allergy): the cheap local gate before the clinic is asked whether the place is missing (clinic-api/symptom_lexicon.VAGUE decides)
+_VAGUE_COMPLAINT_WORD = re.compile(
+    r"ব্যথা|ব্যাথা|যন্ত্রণা|দর্দ|दर्द|तकलीफ|এলার্জি|অ্যালার্জি|एलर्जी|\b(?:pain|painful|dard|allerg\w*|alerg\w*|alerji|elerji|elarji|b[a-z]*y?th[a-z]*|vy?ath\w*|beth\w*|byath\w*)\b",
+    re.I,
+)
+
+
 def _names_an_offered_doctor(session: CallSession, text: str) -> bool:
     """Owner, 2026-11-04 (offered "কুণাল সিনহা, অভিজিৎ সরকার. কাকে দেখাতে চান?" -- "সিনহাকে করে দিন" was answered "you are speaking to Sonoscan Kolkata"): while a question about the doctors just offered is open,
     an answer that names one of them is that choice -- decided FIRST, before any guess that the sentence is about the clinic's name, a test or anything else."""
@@ -7207,6 +7214,21 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             _lr = await _route_dept(_combined, lang, session)
             if _lr.get("matched"):
                 await _speak(session, _with_resume(session, await _route_reply(session, _lr, _combined, lang), lang), lang)
+                return
+    if (
+        not confirmed_entity
+        and session.booking is None
+        and _tools is not None
+        and len(text.split()) <= 12
+        and _VAGUE_COMPLAINT_WORD.search(text)
+        and getattr(session, "dept_pending", None) is None
+    ):
+        # Owner, 2026-11-04 ("byatha ache doctor dekhabo", "bhythar doctor dekhabo", "allergyr doctor dekhabo": pain or allergy, no place): asked WHERE before anything else reads the sentence -- it used to be
+        # taken for a department lookup (General Medicine by default) or "allergyr" for a doctor's name. The clinic's route says so (needs_location); the answer is routed in the next turn.
+        with contextlib.suppress(ToolCallError):
+            _vr = await _route_dept(text, lang, session)
+            if _vr.get("needs_location"):
+                await _speak(session, location_question(_vr["needs_location"], lang), lang)
                 return
     early_pick = None
     if not confirmed_entity and session.booking is None and len(text.split()) <= 8 and _names_an_offered_doctor(session, text):

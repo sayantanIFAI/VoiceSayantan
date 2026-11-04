@@ -168,3 +168,11 @@ def test_a_place_in_latin_letters_is_a_place_not_a_reason_to_ask_where(text, dep
     # Owner, 2026-11-04: a caller who says where in Latin letters ("buke", "kane") is routed, not asked "where?"
     assert lex.vague_kind(text) is None
     assert lex.departments_for(text) == [dept]
+
+
+@pytest.mark.parametrize(
+    "text,kind",
+    [("bhythar doctor dekhabo", "pain"), ("bythar doctor dekhabo", "pain"), ("ব্যথার ডাক্তার দেখাবো", "pain"), ("allergyr doctor dekhabo", "allergy"), ("alergy hoyeche", "allergy")],
+)
+def test_more_ways_of_saying_pain_or_allergy_with_no_place(text, kind):
+    assert lex.vague_kind(text) == kind

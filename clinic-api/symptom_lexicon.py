@@ -189,8 +189,8 @@ for _dept, _words in _ROMAN_BODY.items():
 # Owner, 2026-11-04 ("byatha ache doctor dekhabo", "allergyr doctor dekhabo"): a complaint that names the KIND (pain, allergy) but not the PLACE cannot be routed to a department. The caller is asked where --
 # "কোথায় ব্যথা?" / "কোথায় অ্যালার্জি?" -- and the answer plus the word goes through the normal routing ("পায়ে ব্যথা" -> bones, "চামড়ায় অ্যালার্জি" -> skin, "নাকে অ্যালার্জি" -> ENT).
 VAGUE: dict[str, list[str]] = {
-    "pain": ["ব্যথা", "ব্যাথা", "যন্ত্রণা", "ব্যথার", "দর্দ", "दर्द", "तकलीफ", "pain", "byatha", "betha", "bethha", "byathha", "dard", "painful"],
-    "allergy": ["অ্যালার্জি", "এলার্জি", "অ্যালার্জির", "এলার্জির", "অ্যালার্জিক", "एलर्जी", "allergy", "allergyr", "allergic", "allerji", "alerji"],
+    "pain": ["ব্যথা", "ব্যাথা", "যন্ত্রণা", "ব্যথার", "দর্দ", "दर्द", "तकलीफ", "pain", "byatha", "betha", "bethha", "byathha", "dard", "painful", "byathar", "bethar", "bytha", "bythar", "bhytha", "bhythar", "vyatha", "vyathar", "byatha", "bethay"],
+    "allergy": ["অ্যালার্জি", "এলার্জি", "অ্যালার্জির", "এলার্জির", "অ্যালার্জিক", "एलर्जी", "allergy", "allergyr", "allergic", "allerji", "alerji", "alergy", "alergyr", "allergir", "elerji", "elarji", "allergyte"],
 }
 
 
