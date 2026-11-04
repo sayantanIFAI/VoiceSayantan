@@ -16,9 +16,10 @@ for p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+from test_orchestrator_booking_flow import FakeWS, m  # noqa: F401,E402  (the harness: the real orchestrator with the pod-only libraries stubbed)
+
 from agent import booking_capture as bc
 from agent.booking_flow import new_state
-from test_orchestrator_booking_flow import FakeWS, m  # noqa: F401,E402  (the harness: the real orchestrator with the pod-only libraries stubbed)
 
 
 def waiting_for_name(**extra):
@@ -167,3 +168,45 @@ def test_the_answers_a_booking_detail_helper_reads_the_session(m):  # noqa: F811
     assert m._answers_a_booking_detail(session, "bn") is True
     session.cleanup()
     assert isinstance(types.SimpleNamespace(), object)
+
+
+# ------------------------------------------------------------------------- the WhatsApp answer (call ac3534a5)
+
+
+def asked_whatsapp():
+    st = new_state("book_appointment")
+    st.stage = "collecting"
+    st.slots.update(
+        {
+            "doctor_name": "Jaydeep Sanyal",
+            "date": "2026-11-04",
+            "time_slot": "17:00",
+            "phone": "9876543210",
+            "_wa_asked": "1",
+        }
+    )
+    return st
+
+
+@pytest.mark.parametrize("said", ["হ্যাঁ আছে", "হ্যাঁ", "বললাম হ্যাঁ আছে", "yes", "হ্যা আছে"])
+def test_a_clear_yes_to_the_whatsapp_question_is_settled_by_the_words(said):
+    """The confidence gate must not withhold it (main reads readback_answer), or the question counts as answered while the next one is never asked."""
+    st = asked_whatsapp()
+    plan = bc.before_model(st, said, "bn", agreement=0.33)
+    assert plan.skip_model and plan.readback_answer, said
+    assert st.slots.get("_wa_done") == "1"
+
+
+def test_a_no_or_an_unclear_answer_is_not_exempt_from_the_gate():
+    unclear = asked_whatsapp()
+    plan = bc.before_model(unclear, "আমি ভাবছি", "bn", agreement=0.33)
+    assert not plan.readback_answer and plan.speak  # asked again, not settled
+    no = asked_whatsapp()
+    plan = bc.before_model(no, "না", "bn", agreement=1.0)
+    assert not plan.readback_answer and plan.speak  # "which number does have WhatsApp?" is spoken by the booking itself
+    second_miss = asked_whatsapp()
+    second_miss.slots["_wa_tries"] = 1
+    plan = bc.before_model(second_miss, "আমি ভাবছি", "bn", agreement=0.33)
+    assert (
+        plan.skip_model and not plan.readback_answer
+    )  # moved on after the second miss, but not by a yes the words settle

@@ -1451,6 +1451,9 @@ def _whatsapp_turn(st, text: str, lang: str, plan: "TurnPlan") -> bool:
     if answer == "yes" or tries >= 1:
         st.slots["_wa_done"] = "1"
         plan.slots, plan.skip_model = {}, True
+        # Owner, 2026-11-04 (call ac3534a5): a clear "হ্যাঁ আছে" heard at agreement 0.33 was withheld by the confidence gate AFTER this step had marked the question answered, so the phone number was never
+        # asked and the repeated yes found no step to take it. A yes the words themselves settle is not withheld for the recognisers disagreeing (as for a yes to a read-back).
+        plan.readback_answer = answer == "yes"
         return True
     st.slots["_wa_tries"] = tries + 1
     plan.speak = prompt("whatsapp_again", lang, digits=spoken_digit_groups(st.slots.get("phone")))
