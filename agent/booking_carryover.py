@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import re
 
+from agent import book_words
+
 MAX_GAP_TURNS = 6  # was 3 (same distance agent/enquiry_followup.FOLLOWUP_MAX_GAP treats as "just now"): a doctor just discussed stays the subject across a couple of side questions
 
 _SAME_DAY = (
@@ -170,6 +172,11 @@ def _refuses(clause: str) -> bool:
     return _has(clause + " ", _NOT_BOOKING)
 
 
+def _has_book_word(c: str) -> bool:
+    """A booking word in the clause. "বুক" is also the chest ("বুকে ব্যথা"): it counts only as the verb "book" (agent/book_words.py); the other booking words (বুকিং, অ্যাপয়েন্টমেন্ট ...) always count."""
+    return any((w in c) if w not in ("বুক", "बुक") else book_words.has_book_verb(c) for w in _BOOK_WORDS)
+
+
 def asks_to_book(text: str) -> bool:
     """The caller asks for a booking (and is not asking about one they already have, nor refusing one)."""
     t = _norm(text)
@@ -177,7 +184,7 @@ def asks_to_book(text: str) -> bool:
         return False
     for raw in _CLAUSE_SPLIT.split((text or "").lower()):
         c = _norm(raw)
-        if c and (_has(c, _BOOK_REQUEST) or any(w in c for w in _BOOK_WORDS) or _has(c, ("book",))) and not _refuses(c):
+        if c and (_has(c, _BOOK_REQUEST) or _has_book_word(c) or _has(c, ("book",))) and not _refuses(c):
             return True
     return False
 

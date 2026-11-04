@@ -20,6 +20,8 @@ from __future__ import annotations
 import re
 import unicodedata
 
+from agent import book_words
+
 # Close the call on this many off-topic turns IN A ROW (the owner's rule; 2026-10-27: two, not three).
 CLOSE_AT = 2
 
@@ -80,7 +82,7 @@ def has_health_word(text: str) -> bool:
 
     Owner, 2026-10-28: "আমি আপনাকে ভালোবাসি" ("I love you") was never recognised as small talk because "আপনাকে" CONTAINS "নাক" (nose) and "পা" (foot) hides inside পাব, পারি, পাচ্ছি ... Words are
     now matched as WORDS: the whole word, a long word's start, or a short word with an ending a Bengali body word really takes -- never a piece in the middle of another word."""
-    t = _norm(text)
+    t = _norm(book_words.strip_book_verb(text))  # "বুক করুন" is "book it", not the chest (call 87bbe05b)
     if not t:
         return False
     tokens = t.split()

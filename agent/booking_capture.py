@@ -1644,7 +1644,8 @@ def before_model(st, text: str, lang: str, window=None, today=None, agreement: f
             name = spelled.title()
             st.pending_name = name
             plan.speak = readback(st, lang, "name", name)
-        elif asked_name and missing[0] == "patient_name" and "patient_name" in st.asked_fields and not (plan.digits or plan.phone or plan.time or plan.date or plan.age):
+        # the name is what is being waited for when it is the only thing missing that the caller is asked for: the time is never asked of the caller, so it may sit first in the list (call 87bbe05b)
+        elif asked_name and set(missing) - {"time_slot"} == {"patient_name"} and "patient_name" in st.asked_fields and not (plan.digits or plan.phone or plan.time or plan.date or plan.age):
             span = name_answer(text, lang)
             tries = int(st.slots.get("_name_tries") or 0)
             if span is not None and (agreement is None or agreement >= _name_floor(span, tries)):  # the second try is let through on less: the caller is not asked a third time for what was heard well enough to read back

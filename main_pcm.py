@@ -176,7 +176,7 @@ from agent.catalogue_forms import lab_test_code
 from agent import multi_test_confirm  # garbled test names in a total: read back once, price after a yes
 from agent.slot_grounding import ground_slots, has_test_context, is_plausible_test_name  # a test/doctor name the model made up is dropped before any lookup
 from agent.transcript_rules import AliasTable  # which catalogue tests/doctors a sentence actually names
-from agent import booking_capture  # sourav 2026-10-16: deterministic phone / name / ordinal-slot capture + safe confirm recovery for the doctor booking
+from agent import book_words, booking_capture  # sourav 2026-10-16: deterministic phone / name / ordinal-slot capture + safe confirm recovery for the doctor booking
 from agent.digit_speech import spoken_digit_groups  # owner, 2026-10-26: a phone/confirmation number spoken with a pause between groups of five, not one flat run
 from agent import reschedule_request  # owner, 2026-10-31: 'move my booking' (bring forward / push back / I cannot come) recognised by its parts
 from agent import booking_carryover  # sourav 2026-10-14: 'book him / that day' after a doctor-availability answer
@@ -1546,10 +1546,27 @@ def _same_line_key(text: str) -> str:
     return re.sub(r"[\s.,;:!?।]+", " ", unicodedata.normalize("NFC", text or "")).strip().lower()
 
 
+_PUT_THROUGH_OFFER = {
+    "bn": "মনে হচ্ছে আমি আপনাকে ঠিকমতো সাহায্য করতে পারছি না। চাইলে আমি আপনাকে আমাদের কাউন্টারের কারও সাথে কথা বলিয়ে দিতে পারি। দেব?",
+    "hi": "लगता है मैं आपकी ठीक से मदद नहीं कर पा रही। चाहें तो मैं आपको हमारे काउंटर पर किसी से बात करा सकती हूँ। करा दूँ?",
+    "en": "It seems I am not helping you properly. If you like, I can put you through to someone at our counter. Shall I?",
+}
+
+
 async def _never_the_same_question_twice(session: CallSession, text: str, lang: str, repeat_ok: bool) -> str:
     """Owner, 2026-10-31 ("not telling back the same thing"): when the agent is about to ask the very QUESTION it asked a turn ago, after the caller has said something in between, saying it again gets the same
     answer or none. It changes tactic: ask again in a different way (which doctor, or exactly what problem, with General Medicine options -- _unclear_problem_reply), and the time after that offer a person. Not applied
     to a deliberate repeat (repeat_ok), to a statement (no question mark), to a booking's own questions, or to a reply spoken in the same turn."""
+    if session.booking is not None and not repeat_ok and not session.speaking_filler and len(text) >= 25 and text.rstrip().endswith(("?", "？")):
+        # Owner, 2026-11-04 (call 87bbe05b: "ডাক্তার যে সময়ে বসেন ... করব?" asked three times, a yes taken by nothing): a booking question is left alone twice -- a caller may simply not have been
+        # heard -- but the THIRD time the very same question is about to be asked in as many turns, it is a loop, and a person is offered instead (a yes is taken by the hand-off offer).
+        _key = _same_line_key(text)
+        _turns = {t for k, t in (getattr(session, "recent_spoken", None) or [])[-4:] if k == _key and t < session.turn_count}
+        if len(_turns) >= 2:
+            logger.warning("[%s] the same booking question for the third time in a row: offering a person instead", session.call_id)
+            session.awaiting_handoff_offer = True
+            return _PUT_THROUGH_OFFER.get(lang, _PUT_THROUGH_OFFER["en"])
+        return text
     if repeat_ok or session.speaking_filler or session.booking is not None or len(text) < 25 or not text.rstrip().endswith(("?", "？")):
         return text
     key = _same_line_key(text)
@@ -1559,11 +1576,7 @@ async def _never_the_same_question_twice(session: CallSession, text: str, lang: 
     session.same_question_repeats = getattr(session, "same_question_repeats", 0) + 1
     logger.info("[%s] the same question again (%d): changing tactic", session.call_id, session.same_question_repeats)
     if session.same_question_repeats >= 2:
-        return {
-            "bn": "মনে হচ্ছে আমি আপনাকে ঠিকমতো সাহায্য করতে পারছি না। চাইলে আমি আপনাকে আমাদের কাউন্টারের কারও সাথে কথা বলিয়ে দিতে পারি। দেব?",
-            "hi": "लगता है मैं आपकी ठीक से मदद नहीं कर पा रही। चाहें तो मैं आपको हमारे काउंटर पर किसी से बात करा सकती हूँ। करा दूँ?",
-            "en": "It seems I am not helping you properly. If you like, I can put you through to someone at our counter. Shall I?",
-        }.get(lang, "Shall I put you through to someone at our counter?")
+        return _PUT_THROUGH_OFFER.get(lang, "Shall I put you through to someone at our counter?")
     try:
         return await _unclear_problem_reply(session, lang)
     except Exception:  # noqa: BLE001 - a change of tactic must never take the reply down
@@ -3714,6 +3727,27 @@ async def _sits_start(st, date_iso: str, info: dict) -> str | None:
     return start
 
 
+async def _fill_time_slot(session: CallSession, st, lang: str) -> bool:
+    """Owner, 2026-11-04 (call 87bbe05b: only the time was missing, and "ডাক্তার যে সময়ে বসেন, সেই সময়েই ... করব?" was asked three times because a yes sets nothing): the caller is never asked for a time (the doctor's
+    sitting is the time), so a booking with a doctor and a day and still no time takes the doctor's first free slot of that day. Nothing is said here; the time is told back at the end like any other. False when
+    there is nothing to fill or no free slot (the booking then goes on exactly as before)."""
+    if _tools is None or st.action != "book_appointment" or st.slots.get("time_slot") or not (st.slots.get("doctor_name") and st.slots.get("date")):
+        return False
+    try:
+        info = await _tools.free_slots(st.slots["doctor_name"], st.slots["date"])
+    except Exception as e:  # noqa: BLE001 - an aid: any failure leaves the booking exactly as it was
+        logger.warning("[%s] free_slots failed while filling the time (%s)", session.call_id, e)
+        return False
+    if not info.get("found") or not info.get("sits"):
+        return False
+    slot = slot_proposal.pick(info.get("free_slots") or [], st.slots["date"], skip=st.slots.get("_time_skip") or ())
+    if not slot:
+        return False
+    st.slots["time_slot"] = slot
+    logger.info("[%s] the booking had a doctor and a day but no time: the doctor's first free slot (%s) is taken", session.call_id, slot)
+    return True
+
+
 async def _propose_slot(session: CallSession, st, lang: str) -> bool:
     """Choose the time for the caller from the doctor's free slots and say it (agent/slot_proposal.py). True when a time was set and spoken.
     A time the caller already gave stays if it is a real slot of that day; one that is not (\"12:00\" for \"between ten and twelve\", the closing time) is
@@ -5184,6 +5218,7 @@ async def _route_dept(text: str, lang: str, session: CallSession | None = None) 
     """sourav, 2026-10-24: clinic API department routing, with the patient's age when it is known -- from the sentence ("amar 15 bochorer chheler ...") or from the open booking's
     age answer -- so a patient of 13 or more is never sent to the paediatrician (clinic-api/lay_departments.py). The age is passed ONLY when known, so every earlier call
     (and every test double that takes just text and lang) behaves exactly as before."""
+    text = book_words.strip_book_verb(text)  # "বুক করুন" is "book it": the chest must not be found in a booking request (call 87bbe05b: it went to Cardiology)
     age = age_cues.age_in(text)
     if age is None and session is not None and session.booking is not None:
         with contextlib.suppress(TypeError, ValueError):
@@ -8242,6 +8277,8 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             ):
                 return  # the time is proposed as a question; the caller's answer comes before the name and number
 
+            await _fill_time_slot(session, st, lang)  # (a booking that reached here with a doctor and a day but no time: the doctor's first free slot, never a yes / no nothing can answer)
+
             # Secure the hold as soon as doctor+date+time are known, even
             # if patient details are still missing -- KCD-376: the
             # concurrency guard must run before the caller has spoken a
@@ -8279,6 +8316,10 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                 return
 
             missing = missing_required(st)
+            logger.info(
+                "[%s] booking state: %s, missing %s, has doctor %s day %s time %s hold %s, time_ok %s, asked %s",
+                session.call_id, st.action, missing, bool(st.slots.get("doctor_name")), bool(st.slots.get("date")), bool(st.slots.get("time_slot")), st.hold_token is not None, st.slots.get("_time_ok"), sorted(st.asked_fields),
+            )
             if missing and "phone" not in missing and st.action == "book_appointment" and not any(m in missing for m in ("doctor_name", "date", "time_slot")):
                 # the number is read back for a yes BEFORE the name is asked (it used to wait for the whole booking to be ready)
                 _num = effective_phone(st)
@@ -9092,7 +9133,7 @@ def _expected_answer_kind(session: CallSession) -> str | None:
             if b.stage in ("confirming", "awaiting_charge_confirm") or _readback_pending(session):
                 return "yes_no"
             if b.stage == "collecting":
-                missing = missing_required(b)
+                missing = [m for m in missing_required(b) if m != "time_slot"]  # the time is never asked of the caller: it must not name the kind of answer being waited for (call 87bbe05b: a name waited for as a "day")
                 return _BOOKING_FIELD_KIND.get(missing[0]) if missing else None
             return None
         if (
