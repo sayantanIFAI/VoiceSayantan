@@ -10429,6 +10429,8 @@ async def _unknown_full_name_turn(session: CallSession, text: str, lang: str) ->
         a, b = toks[j - 1], toks[j]
         if a in _NAME_FILLER or b in _NAME_FILLER or len(name_script.name_skeleton(a)) < 2:
             continue
+        if any(a.lower() == s_.lower() for s_ in surnames):
+            continue  # (2026-11-04: "দত্ত স্কিন" -- a word that is itself a surname is not the first half of a name: "স্কিন" (skin) only sounds like a surname)
         # (2026-11-04: "অমিত কুমার" was read back as "অমিত কুমা" -- a word that IS a surname as said (কুমার, সরকার, হালদার) is kept; only another word loses its "of" ending)
         _b_is_surname = any(b.lower() == s_.lower() for s_ in surnames)
         for cand in ((b, _strip_genitive(b)) if _b_is_surname else (_strip_genitive(b), b)):  # the name without the "of" ending is what is said back
