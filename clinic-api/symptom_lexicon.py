@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Iterable
 
 # ------------------------------------------------------------------------------------------------------------------------------ the table
 # department -> {weight: [words / phrases]}
@@ -213,12 +214,12 @@ def _sound_index() -> dict[str, list[tuple[str, float]]]:
     return _SOUND
 
 
-def _sound_hits(text: str) -> dict[str, float]:
+def _sound_hits(text: str, names: frozenset[str] = frozenset()) -> dict[str, float]:
     """department -> weight for every word of the sentence (and every two neighbouring words run together: "derma tologist") that SOUNDS like a specialist's name: the same fold, or (a long fold only) one
     class dropped or added."""
     out: dict[str, float] = {}
     idx = _sound_index()
-    toks = _TOKEN.findall(text or "")
+    toks = [t for t in _TOKEN.findall(text or "") if fold(t) not in names]
     cands = list(toks) + [a + b for a, b in zip(toks, toks[1:])]
     for tok in cands:
         k = phonetic_key(tok)
@@ -300,13 +301,15 @@ def _word_meets(sentence_word: str, table_word: str) -> int:
     return 0
 
 
-def _phrase_hits(words: list[str], phrase_words: list[str]) -> int:
+def _phrase_hits(words: list[str], phrase_words: list[str], exact_only: frozenset[int] = frozenset()) -> int:
     """2 when the table words come in order (at most two sentence words between neighbours) and every one is an exact / ordinary-ending match; 1 when one of them is only a near match; 0 otherwise."""
     if not phrase_words:
         return 0
     best = 0
     for start, w in enumerate(words):
         q0 = _word_meets(w, phrase_words[0])
+        if q0 == 1 and start in exact_only:
+            q0 = 0
         if not q0:
             continue
         pos, quality, ok = start, q0, True
@@ -314,6 +317,8 @@ def _phrase_hits(words: list[str], phrase_words: list[str]) -> int:
             found = None
             for j in range(pos + 1, min(len(words), pos + 4)):
                 q = _word_meets(words[j], nxt)
+                if q == 1 and j in exact_only:
+                    q = 0
                 if q:
                     found, quality = j, min(quality, q)
                     break
@@ -343,28 +348,57 @@ def _prepared() -> list[tuple[str, float, list[str]]]:
     return _PREPARED
 
 
-def score(text: str) -> dict[str, tuple[float, int]]:
-    """department -> (strongest weight, number of distinct table entries that hit) for every department the sentence points at."""
-    words = _words(text)
+# Owner, 2026-11-04 ("this can never be if talking about doctor: মুত্র will never come, that can come for a lab test only -- guess smart from the question and answer context"): a word that is a DOCTOR'S NAME
+# (any name or alias in the clinic's doctor table, handed in by the caller) is never a symptom or a specialist, and the word right after a title -- "ডাক্তার ___", "ডাঃ ___", "Dr ___", "ডক্টর ___" -- is a name
+# position where only an exact written match counts, never a one-letter slip or a sound-alike.
+_TITLES = frozenset({"ডাঃ", "ডা", "ডাক্তার", "ডাক্টার", "ডক্টর", "ডাক্তারবাবু", "ডাক্তারবাবুর", "ডাক্তারের", "dr", "doctor", "docter", "daktar", "डॉ", "डॉक्टर", "डाक्टर", "mr", "mrs", "sir", "madam", "মহাশয়", "বাবু"})
+_TITLES_FOLDED = None
+
+
+def _titles() -> frozenset[str]:
+    global _TITLES_FOLDED
+    if _TITLES_FOLDED is None:
+        _TITLES_FOLDED = frozenset(fold(t) for t in _TITLES)
+    return _TITLES_FOLDED
+
+
+def _name_words(names: Iterable[str] | None) -> frozenset[str]:
+    out = set()
+    for n in names or ():
+        for part in re.split(r"[\s|,.]+", n or ""):
+            f = fold(part)
+            if len(f) >= 3 and f not in _titles():
+                out.add(f)
+    return frozenset(out)
+
+
+def score(text: str, doctor_names: Iterable[str] | None = None) -> dict[str, tuple[float, int]]:
+    """department -> (strongest weight, number of distinct table entries that hit) for every department the sentence points at. `doctor_names`: every name / alias of the clinic's doctors (see above)."""
+    names = _name_words(doctor_names)
+    all_words = _words(text)
+    words = [w for w in all_words if w not in names]  # a doctor's name is not a symptom
+    exact_only = frozenset(i + 1 for i, w in enumerate(words[:-1]) if w in _titles())  # the word after a title is in a name position
     out: dict[str, tuple[float, int]] = {}
     if not words:
         return out
     for dept, weight, pw in _prepared():
-        q = _phrase_hits(words, pw)
+        q = _phrase_hits(words, pw, exact_only)
         if q:
             w = weight if q == 2 else weight - 0.25  # a near match never ties with an exact one (মাসিক "period" is one letter from মানসিক "mental")
             best, n = out.get(dept, (0.0, 0))
             out[dept] = (max(best, w), n + 1)
-    for dept, w in _sound_hits(text).items():
+    skip = {i for i in exact_only}
+    kept = [w for i, w in enumerate(words) if i not in skip]
+    for dept, w in _sound_hits(" ".join(kept), names).items():
         best, n = out.get(dept, (0.0, 0))
         out[dept] = (max(best, w), n + 1)
     return out
 
 
-def departments_for(text: str) -> list[str]:
+def departments_for(text: str, doctor_names: Iterable[str] | None = None) -> list[str]:
     """The department(s) the sentence points at, strongest first. One name when one department is clearly strongest; two names (the caller is asked which) when two score the same; [] when
     no symptom word was found. A department that is only a vague word (weight 0.5) is returned only when nothing stronger was said."""
-    found = score(text)
+    found = score(text, doctor_names)
     if not found:
         return []
     ranked = sorted(found.items(), key=lambda kv: (-kv[1][0], -kv[1][1], kv[0]))

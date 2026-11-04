@@ -117,3 +117,16 @@ def test_no_doctors_name_is_taken_for_a_symptom_or_a_specialist():
         for name in {key, latin, bn, hi}:
             if name:
                 assert lex.departments_for(name) == [], name
+
+
+def test_a_word_that_is_a_doctors_name_is_never_a_symptom_and_the_word_after_a_title_is_a_name():
+    # Owner, 2026-11-04: "মুত্র can come for a lab test only -- if talking about a doctor it never comes": the clinic's own doctor names are handed in, and the word after "ডাক্তার / Dr" is a name position
+    import seed
+
+    names = [n for k, (lat, bn, hi) in seed.doctor_full_names().items() for n in (k, lat, bn, hi)]
+    for sentence in ["ডাক্তার রিনা মিত্র কখন বসেন", "ডাক্তার মিত্র আছেন", "Dr Halder কবে বসবে", "ডাক্তার সরকার", "ডাঃ গাঙ্গুলী আজ আছেন"]:
+        assert lex.departments_for(sentence, names) == [], sentence
+    # a title before a real written symptom/specialist word still finds it, and ordinary symptoms are untouched with the names handed in
+    assert lex.departments_for("আমাকে একটা ডেরমাটোলজিস্ট দেখাতে হবে", names) == ["Dermatology"]
+    assert lex.departments_for("আমার ছেলের ছুলি হয়েছে", names) == ["Dermatology"]
+    assert lex.departments_for("মূত্রের সমস্যা", names) == ["Urology"]
