@@ -171,6 +171,21 @@ LEXICON: dict[str, dict[float, list[str]]] = {
 # Owner, 2026-11-04 ("ডেরমাটোলজিস্ট and dermatologist must be 95 percent similar -- for any department there would be phonetic and accent variation"): the specialist's / department's own name is also
 # matched BY SOUND, across Bengali, Hindi and Latin letters, with the same phonetic fold the place-name matcher uses (phonetic_match.phonetic_key): "ডেরমাটোলজিস্ট", "ডার্মাটোলজিস্ট",
 # "डर्मेटोलॉजिस्ट" and "dermatologist" all fold to the one key. These are the names; every spelling of them is found without being listed.
+# Owner, 2026-11-04: the PLACE of a complaint written in Latin letters ("amar buke khub betha hocche", "paye byatha", "kane betha") is a body-part word like any other. Without these the agent would ask
+# "where?" of a caller who has just said where. Weight 1: a body part decides the department when nothing stronger is said.
+_ROMAN_BODY: dict[str, list[str]] = {
+    "Cardiology": ["buk", "buke", "buker", "bukhe", "bukey"],
+    "ENT": ["kan", "kane", "kaner", "nak", "nake", "naker", "gola", "gole", "golar", "galay", "gala"],
+    "Neurology": ["matha", "mathay", "mathar", "mathate", "mathae"],
+    "Orthopaedics": ["komor", "komore", "komorer", "haat", "haate", "hater", "hat", "hatu", "hatute", "hatur", "paye", "payer", "kandh", "kandhe", "ghar", "gharer", "angul", "angule"],
+    "Dentistry": ["dat", "daat", "dante", "danter", "dater", "mari"],
+    "Ophthalmology": ["chokh", "chokhe", "chokher"],
+    "General Medicine": ["pet", "pete", "peter"],
+}
+for _dept, _words in _ROMAN_BODY.items():
+    LEXICON[_dept].setdefault(1, []).extend(_words)
+
+
 # Owner, 2026-11-04 ("byatha ache doctor dekhabo", "allergyr doctor dekhabo"): a complaint that names the KIND (pain, allergy) but not the PLACE cannot be routed to a department. The caller is asked where --
 # "কোথায় ব্যথা?" / "কোথায় অ্যালার্জি?" -- and the answer plus the word goes through the normal routing ("পায়ে ব্যথা" -> bones, "চামড়ায় অ্যালার্জি" -> skin, "নাকে অ্যালার্জি" -> ENT).
 VAGUE: dict[str, list[str]] = {

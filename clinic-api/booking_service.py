@@ -1291,6 +1291,15 @@ def route_department(db: Session, query_text: str, lang: str, age: int | None = 
         by_name = {d.name: d.id for d in db.query(Department).all()}
         lay_ids = [by_name[n] for n in lay_names if n in by_name]
         strong = any(not weak for weak in lay_departments.lay_hits(q).values())
+        if not strong and not matches:
+            # Owner, 2026-11-04 ("byatha ache doctor dekhabo"): a WEAK lay match ("... pain ... doctor" = an ordinary physician) on a sentence that names the kind of complaint but not the place is not an answer:
+            # the caller is asked where (see symptom_lexicon.VAGUE).
+            _names: list[str] = []
+            for _d in db.query(Doctor).all():
+                _names += [_d.name, _d.full_name, _d.full_name_bn, _d.full_name_hi, _d.aliases_bn, _d.aliases_hi]
+            _kind = symptom_lexicon.vague_kind(query_text, _names)
+            if _kind:
+                return {"matched": False, "needs_location": _kind}
         if lay_ids and (strong or not matches):
             matches = list(dict.fromkeys(lay_ids))
     if not matches:

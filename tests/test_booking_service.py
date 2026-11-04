@@ -727,7 +727,8 @@ def test_department_routing_matches_and_flags_ambiguity(clinic_modules):
     db = db_mod.SessionLocal()
     try:
         result = bs.route_department(db, "amar buke khub betha hocche", "en")
-        assert result == {"matched": False}  # no English keyword hit -- transliteration is out of scope here
+        # (2026-11-04: the romanised body part "buke" (chest) is now understood -- the symptom-word lexicon; it used to find nothing)
+        assert result["matched"] and result["department_name"] == "Cardiology"
 
         result = bs.route_department(db, "I have chest pain", "en")
         assert result["matched"] and result["department_name"] == "Cardiology"

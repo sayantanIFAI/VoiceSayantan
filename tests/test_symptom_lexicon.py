@@ -158,3 +158,13 @@ def test_the_location_questions_are_recognised_when_the_agent_says_them():
         for lang in ("bn", "hi", "en"):
             assert rt.location_kind_of(rt.location_question(kind, lang)) == kind
     assert rt.location_kind_of("আজ কার্ডিওলজি বিভাগে") is None
+
+
+@pytest.mark.parametrize(
+    "text,dept",
+    [("amar buke khub betha hocche", "Cardiology"), ("kane betha", "ENT"), ("matha byatha", "Neurology"), ("komor byatha", "Orthopaedics"), ("dante byatha", "Dentistry"), ("chokhe allergy", "Ophthalmology"), ("peter byatha", "General Medicine")],
+)
+def test_a_place_in_latin_letters_is_a_place_not_a_reason_to_ask_where(text, dept):
+    # Owner, 2026-11-04: a caller who says where in Latin letters ("buke", "kane") is routed, not asked "where?"
+    assert lex.vague_kind(text) is None
+    assert lex.departments_for(text) == [dept]
