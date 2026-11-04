@@ -17,9 +17,12 @@ built, so a respelled clip is cached under what was actually sent to the voice.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import unicodedata
+
+from agent import bn_glide_rules
 
 # spoken word (as written everywhere else in the repo) -> spelling that makes the voice say it right.
 _RESPELL: dict[str, str] = {
@@ -203,9 +206,61 @@ def _family(w: str) -> str | None:
     return None
 
 
+# LAYER 0 -- spellings chosen by a native listener AFTER this file was last deployed, kept in a data file so they take effect without a code change: /workspace/respell_overrides.json,
+# {"পেমেন্ট": "পে মেন্ট", ...} (tools/apply_listening_picks.py writes it from a filled-in listening sheet). The file is read again whenever it changes; the agent process applies it, so a new pick is heard on
+# the next reply that is not already cached. It wins over the table and the rules below, and it is applied to the word with the same endings the table's words take. BN_RESPELL_OVERRIDES=0 switches it off.
+# Only a Bengali spelling (letters, spaces) of at most 60 characters is accepted: an entry that is anything else is ignored, never sent to the voice.
+OVERRIDES_FILE = os.environ.get("BN_RESPELL_FILE", "/workspace/respell_overrides.json")
+_OVERRIDES_CACHE: dict = {"mtime": None, "data": {}}
+_OVERRIDE_VALUE = re.compile(r"^[\u0980-\u09ff]+(?: [\u0980-\u09ff]+)*$")
+
+
+def overrides() -> dict[str, str]:
+    """The listener-chosen spellings from the data file ({} when the file is missing, unreadable or switched off)."""
+    if os.environ.get("BN_RESPELL_OVERRIDES", "1") == "0":
+        return {}
+    try:
+        mtime = os.path.getmtime(OVERRIDES_FILE) if os.path.exists(OVERRIDES_FILE) else None
+    except OSError:
+        mtime = None
+    if _OVERRIDES_CACHE["mtime"] == mtime and (mtime is not None or not _OVERRIDES_CACHE["data"]):
+        return _OVERRIDES_CACHE["data"]
+    data: dict[str, str] = {}
+    if mtime is not None:
+        try:
+            with open(OVERRIDES_FILE, encoding="utf-8") as fh:
+                for word, spelling in (json.load(fh) or {}).items():
+                    if (
+                        isinstance(word, str)
+                        and isinstance(spelling, str)
+                        and len(spelling) <= 60
+                        and _OVERRIDE_VALUE.match(unicodedata.normalize("NFC", spelling))
+                    ):
+                        data[_key(word)] = unicodedata.normalize("NFC", spelling)
+        except (OSError, ValueError, AttributeError):
+            data = {}
+    _OVERRIDES_CACHE["mtime"], _OVERRIDES_CACHE["data"] = mtime, data
+    return data
+
+
+def _override(w: str) -> str | None:
+    chosen = overrides()
+    if not chosen:
+        return None
+    if w in chosen:
+        return chosen[w]
+    for base, spelling in chosen.items():
+        if w.startswith(base) and w[len(base) :] in _FAMILY_ENDINGS:
+            return spelling + w[len(base) :]
+    return None
+
+
 def respell(word: str) -> str:
     """The spelling to send to the voice for one Bengali word; the word itself when it needs no help."""
     w = _key(word)
+    chosen = _override(w)
+    if chosen is not None:
+        return chosen
     if w in _RESPELL:
         return _RESPELL[w]
     fam = _family(w)
@@ -217,9 +272,8 @@ def respell(word: str) -> str:
     joy = _joy_compound(w)
     if joy is not None:
         return joy
-    if w in _NATIVE_SH and os.environ.get("BN_RESPELL_RULES", "1") != "0":
-        return _sh(w)
-    return word
+    out = _sh(w) if w in _NATIVE_SH and os.environ.get("BN_RESPELL_RULES", "1") != "0" else word
+    return bn_glide_rules.rewrite(out)  # the y-glide / flap shape rules: nothing unless BN_GLIDE_RULES chooses a variant (agent/bn_glide_rules.py)
 
 
 def apply(text: str, lang: str) -> str:

@@ -20,3 +20,7 @@ gate-report.md
 # pod-local clutter that must never be committed: old file snapshots and downloaded model weights
 backups/
 wav2vec2_checkpoints/
+
+# listening-pack audio (tools/glide_rules_pack.py): generated, large
+glide_pack/
+loan_pack/
