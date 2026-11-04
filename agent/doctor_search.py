@@ -464,7 +464,11 @@ def offered_followup_reply(items: list[dict], part: str | None, good: bool, lang
 # owner, 2026-10-26: "তাহলে ওই সঞ্জয় গুহার অ্যাপয়েন্টমেন্ট টা দেন কালকে" -- the doctors "রঞ্জন পাল আর সঞ্জয় গুহ" had just been offered, and the caller chose one the way people do: with the
 # Bengali "of" ending on the surname ("গুহার"). The word did not equal the name, so the choice was lost and the agent asked "which doctor?" all over again.
 _NAME_TITLES = {"dr", "ডাঃ", "ডাক্তার", "ডক্টর", "डॉ", "डॉक्टर", "doctor", "mr", "mrs", "sri", "shri"}
-_NAME_TAILS = ("", "র", "ার", "ের", "এর", "কে", "েকে", "কেও", "দের", "রা", "ও", "টা", "টি")
+# Owner, 2026-11-04: every ending a Bengali name takes in speech: the case endings (কে, র, ের, এর, ও, ই), the honorific glued on ("সেনবাবু", "সেনবাবুকে", "সেনবাবুর", "সাহেবকে", "দা") and their pairs.
+_NAME_TAILS = (
+    "", "র", "ার", "ের", "এর", "কে", "েকে", "কেও", "কেই", "দের", "রা", "ও", "ই", "টা", "টি",
+    "বাবু", "বাবুকে", "বাবুর", "বাবুও", "বাবুই", "বাবুরা", "সাহেব", "সাহেবকে", "সাহেবের", "সাহেবও", "দা", "দাকে", "দার", "দাও", "স্যার", "স্যারকে", "স্যারের",
+)
 
 
 def _name_tokens(s: str) -> list[str]:
@@ -487,8 +491,8 @@ def choose_by_name(text: str, doctors: list[list[str]]) -> int | None:
             parts = _name_tokens(spelling or "")
             hit = [p for p in parts if len(p) >= 2 and any(_token_is(w, p) for w in words)]
             n = len(hit)
-            if n == 1 and len(hit[0]) < 3 and len(parts) > 1:
-                n = 0
+            if n == 1 and len(hit[0]) < 3 and len(parts) > 1 and len(words) > 5:
+                n = 0  # (a two-letter surname, "কর" / "সেন"-like, alone is too common a word in a LONG sentence; among the doctors just offered and a short answer it is the choice)
             best = max(best, n)
         scores.append(best)
     top = max(scores, default=0)

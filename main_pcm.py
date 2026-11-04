@@ -7145,151 +7145,160 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
         # did not understand" -- real call 2026-10-17.
         session.lapsed_pending = (pending, session.turn_count)
 
+    early_pick = None
+    if not confirmed_entity and session.booking is None and len(text.split()) <= 8 and _names_an_offered_doctor(session, text):
+        # Owner, 2026-11-04 ("সিনহাকে করে দিন" after "কুণাল সিনহা, অভিজিৎ সরকার. কাকে দেখাতে চান?" was taken for the clinic's name): while a question about the doctors just offered is open, an answer that names
+        # one of them (by surname or first name, with any ending) is that choice -- settled FIRST, before any other rule gets to read the sentence.
+        early_pick = await _dept_search_turn(session, text, lang)
+        if early_pick is True:
+            return
+        early_pick = early_pick if isinstance(early_pick, dict) else None
     if not confirmed_entity:
-        if await _answer_hearing_check(session, text, lang):
-            return  # owner, 2026-11-03: "হেলো শুনতে পাচ্ছেন" is answered "হ্যাঁ, বলুন।" -- never off-topic talk
-        if session.booking is None and await _answer_clinic_open(session, text, lang):
-            return  # owner, 2026-11-03: "কালকে কি খোলা থাকবে" about the clinic is answered from the hours, never for a doctor
-        if await _answer_pace_request(session, text, lang):
-            return  # owner, 2026-11-03: "স্লো বলুন" / "ধীরে বলুন" / "থেমে থেমে বলুন": slower from now on, and the last line again
-        if await _answer_another_doctor(session, text, lang):
-            return  # owner, 2026-11-04: "আরেকটা ডাক্তার" / "অন্য ডাক্তার": another doctor -- asked which one
-        if await _answer_bare_repeat(session, text, lang):
-            return  # the caller said back a phrase of our last reply: confirmed (owner, 2026-11-01)
-        if await _answer_these_doctors_dept(session, text, lang):
-            return  # "এরা কি সব কার্ডিওলজি?" about the doctors just offered (owner, 2026-11-02)
-        # OWNER'S INSTRUCTION, 2026-10-12: the answer to "is it blood, urine, or imaging?" (asked below, in the
-        # "does not know the name at all" branch) is read here, FIRST -- before anything else gets a chance to
-        # treat this turn as a fresh question. A category answer that doesn't match any of the three, or is
-        # unclear, goes straight to the safety-check message: no guessing past this point, ever.
-        if session.awaiting_test_category:
-            session.awaiting_test_category = False
-            category = match_category_answer(text)
-            if category is not None:
-                await _handle_test_category_answer(session, category, text, lang)
-            else:
-                await _speak(session, phrase("test_unknown_safety_check", lang), lang)
-            return
-        # KCD-lay-terms: a rural lay term for a test category ("রক্ত পরীক্ষা", "পেটের ছবি", "মাথার ছবি"), matched
-        # deterministically before any model call -- but never while a booking is already actively in progress
-        # (session.booking is not None), so a lay-term-shaped word inside an unrelated answer never hijacks it.
-        # owner, 2026-10-26: the answer to "which blood test?": not knowing sends the caller to the prescription photo; asking for the list reads it; a test named goes on as a normal turn
-        if session.awaiting_blood_test is not None:
-            asked_turn, session.awaiting_blood_test = session.awaiting_blood_test, None
-            if session.turn_count - asked_turn <= 2 and session.booking is None:
-                named_now = []
+        if early_pick is None:
+            if await _answer_hearing_check(session, text, lang):
+                return  # owner, 2026-11-03: "হেলো শুনতে পাচ্ছেন" is answered "হ্যাঁ, বলুন।" -- never off-topic talk
+            if session.booking is None and await _answer_clinic_open(session, text, lang):
+                return  # owner, 2026-11-03: "কালকে কি খোলা থাকবে" about the clinic is answered from the hours, never for a doctor
+            if await _answer_pace_request(session, text, lang):
+                return  # owner, 2026-11-03: "স্লো বলুন" / "ধীরে বলুন" / "থেমে থেমে বলুন": slower from now on, and the last line again
+            if await _answer_another_doctor(session, text, lang):
+                return  # owner, 2026-11-04: "আরেকটা ডাক্তার" / "অন্য ডাক্তার": another doctor -- asked which one
+            if await _answer_bare_repeat(session, text, lang):
+                return  # the caller said back a phrase of our last reply: confirmed (owner, 2026-11-01)
+            if await _answer_these_doctors_dept(session, text, lang):
+                return  # "এরা কি সব কার্ডিওলজি?" about the doctors just offered (owner, 2026-11-02)
+            # OWNER'S INSTRUCTION, 2026-10-12: the answer to "is it blood, urine, or imaging?" (asked below, in the
+            # "does not know the name at all" branch) is read here, FIRST -- before anything else gets a chance to
+            # treat this turn as a fresh question. A category answer that doesn't match any of the three, or is
+            # unclear, goes straight to the safety-check message: no guessing past this point, ever.
+            if session.awaiting_test_category:
+                session.awaiting_test_category = False
+                category = match_category_answer(text)
+                if category is not None:
+                    await _handle_test_category_answer(session, category, text, lang)
+                else:
+                    await _speak(session, phrase("test_unknown_safety_check", lang), lang)
+                return
+            # KCD-lay-terms: a rural lay term for a test category ("রক্ত পরীক্ষা", "পেটের ছবি", "মাথার ছবি"), matched
+            # deterministically before any model call -- but never while a booking is already actively in progress
+            # (session.booking is not None), so a lay-term-shaped word inside an unrelated answer never hijacks it.
+            # owner, 2026-10-26: the answer to "which blood test?": not knowing sends the caller to the prescription photo; asking for the list reads it; a test named goes on as a normal turn
+            if session.awaiting_blood_test is not None:
+                asked_turn, session.awaiting_blood_test = session.awaiting_blood_test, None
+                if session.turn_count - asked_turn <= 2 and session.booking is None:
+                    named_now = []
+                    with contextlib.suppress(Exception):
+                        named_now = _fast_path.named_tests(text, language_of_script(text, lang)) if _fast_path is not None else []
+                    if not named_now and lay_terms.wants_the_list(text):
+                        await _handle_lay_term(session, BLOOD, text, lang, ask_first=False)
+                        return
+                    if not named_now and lay_terms.says_unsure_which_test(text):
+                        await _speak(session, phrase("send_prescription_whatsapp", lang), lang)
+                        await _queue_prescription_callback(session, "lay_term_blood", text, lang)
+                        return
+            lay_term = None if session.booking is not None else match_lay_term(text)
+            if lay_term == BLOOD and _fast_path is not None:
                 with contextlib.suppress(Exception):
-                    named_now = _fast_path.named_tests(text, language_of_script(text, lang)) if _fast_path is not None else []
-                if not named_now and lay_terms.wants_the_list(text):
-                    await _handle_lay_term(session, BLOOD, text, lang, ask_first=False)
-                    return
-                if not named_now and lay_terms.says_unsure_which_test(text):
-                    await _speak(session, phrase("send_prescription_whatsapp", lang), lang)
-                    await _queue_prescription_callback(session, "lay_term_blood", text, lang)
-                    return
-        lay_term = None if session.booking is not None else match_lay_term(text)
-        if lay_term == BLOOD and _fast_path is not None:
-            with contextlib.suppress(Exception):
-                if _fast_path.named_tests(text, language_of_script(text, lang)):
-                    lay_term = None  # "CBC blood test ka rate" names a test: that is a price question, not "which blood test?"
-        if lay_term is not None:
-            await _handle_lay_term(session, lay_term, text, lang)
-            return
-        # OWNER'S INSTRUCTION, 2026-10-12: "wo test ka naam toh nhi pta" -- the caller was just asked which test
-        # (session.pending_enquiry, set when test_rate/test_prep had no test_name) and says they do not know its
-        # name at all, not even a category word match_lay_term above would have already caught. Scoped tightly
-        # to that exact context (a recent test_rate/test_prep ask) so an unrelated "I don't know" elsewhere in
-        # the call is never mistaken for this.
-        pending_peek = session.pending_enquiry
-        if (
-            pending_peek is not None
-            and pending_peek[0] in ("test_rate", "test_prep")
-            and session.turn_count - pending_peek[1] <= 1
-            and expresses_not_knowing_test_name(text)
-        ):
-            session.awaiting_test_category = True
-            await _speak(session, phrase("ask_test_category", lang), lang)
-            return
-        # sourav, 2026-10-14: "remove X", "remove that one", "what is the total" over the tests priced earlier in this
-        # call -- decided here, before the model (which only ever sees this one sentence), and answered from live
-        # lookups. Never while a booking is in progress; anything it is not sure of falls through unchanged.
-        if session.booking is None and session.priced_tests and await _answer_from_priced_list(session, text, lang):
-            return
-        if await _answer_multi_questions(session, text, lang):
-            return  # several questions in one breath: each answered (agent/multi_question.py)
-        if owner_answers.asks_phone_booking(text) and not getattr(session, "phone_booking_told", False):
-            session.phone_booking_told = True  # said once; the booking carries on in the same turn
-            await _speak(session, owner_answers.phone_booking_note(lang), lang)
-        if await _answer_when_repeat(session, text, lang):
-            return
-        if await _answer_after_date(session, text, lang):
-            return  # "any day after the 21st" while a doctor is being booked (owner, 2026-10-19)
-        if await _answer_where_in_address(session, text, lang):
-            return  # a where-question about the address (or the number for the location that follows it) is not an echo of the address (owner, 2026-10-19)
-        if await _answer_scan_followup(session, text, lang):
-            return
-        if owner_answers.branch_identity(text, lang) and not _names_an_offered_doctor(session, text) and await _answer_owner_faq(session, text, lang):
-            return  # "আপনারা কি সোনু স্কান বলছেন" is a question about the clinic's name, answered as such -- not an echo of the greeting (owner, 2026-10-19)
-        if await _answer_word_check(session, text, lang):
-            return
-        if await _answer_prescription(session, text, lang):
-            return
-        if await _answer_route_pushback(session, text, lang):
-            return
-        if getattr(session, "last_spoken", "") and repeat_request.asks_repeat(text):
-            # Owner, 2026-10-30: "sunte pelam na" / "bujhlam na" / "ki bolchen?" / "ar ekbar bolben please" ... -> the LAST LINE again, exactly as it was said
-            logger.info("[%s] the caller asked for the last line again", session.call_id)
-            await _speak(session, session.last_spoken, getattr(session, "tts_output_language", None) or lang, repeat_ok=True)
-            return
-        if await _answer_named_total(session, text, lang):
-            return
-        if await _answer_owner_faq(session, text, lang):
-            return
-        if session.booking is None and await _answer_test_overview(session, text, lang):
-            return
-        if session.booking is None and await _answer_body_imaging(session, text, lang):
-            return
-        if where_doctor_sits.states_a_floor(text) and not _booking_open(session):
-            # Owner, 2026-10-31: "পাঁচতলা" / "দোতালাতে" are about the building, not a request for the address: the caller is asked how the assistant can help with a doctor's appointment
-            await _speak(session, where_doctor_sits.help_reply(lang), lang)
-            return
-        if where_doctor_sits.asks_floor(text) and not _booking_open(session):  # owner, 2026-10-29: which floor does the doctor sit on -> the counter tells
-            await _speak(session, where_doctor_sits.reply(lang), lang)
-            return
-        _update_doctor_subject(session, text, lang)
-        if (_context_doctor_info(session) is not None or getattr(session, "dept_topic", None)) and doctor_facts.asks_quality_bare(text):
-            # Owner, 2026-10-31: "তো কি ভালো" (is he good?) was answered "হ্যাঁ, বলুন।": no doctor is ever called better than another, and the caller is asked for the problem or the department
-            await _speak(session, _with_resume(session, doctor_enquiry_cues.good_doctor_reply([], None, lang), lang), lang)
-            return
-        if await _which_doctor_turn(session, text, lang):
-            return
-        if await _unknown_full_name_turn(session, text, lang):
-            return
-        if await _dept_named_availability_turn(session, text, lang):
-            return
-        if session.booking is None and await _doctor_check_turn(session, text, lang):
-            return
-        if session.booking is None and await _doctor_facts_turn(session, text, lang):
-            return
-        if session.booking is None and await _doctor_when_turn(session, text, lang):
-            return
-        if session.booking is None and await _doctor_name_followup_turn(session, text, lang):
-            return
-        if session.booking is None and await _head_pain_turn(session, text, lang):
-            return
-        if session.booking is None and await _answer_department_doctors(session, text, lang):
-            return
+                    if _fast_path.named_tests(text, language_of_script(text, lang)):
+                        lay_term = None  # "CBC blood test ka rate" names a test: that is a price question, not "which blood test?"
+            if lay_term is not None:
+                await _handle_lay_term(session, lay_term, text, lang)
+                return
+            # OWNER'S INSTRUCTION, 2026-10-12: "wo test ka naam toh nhi pta" -- the caller was just asked which test
+            # (session.pending_enquiry, set when test_rate/test_prep had no test_name) and says they do not know its
+            # name at all, not even a category word match_lay_term above would have already caught. Scoped tightly
+            # to that exact context (a recent test_rate/test_prep ask) so an unrelated "I don't know" elsewhere in
+            # the call is never mistaken for this.
+            pending_peek = session.pending_enquiry
+            if (
+                pending_peek is not None
+                and pending_peek[0] in ("test_rate", "test_prep")
+                and session.turn_count - pending_peek[1] <= 1
+                and expresses_not_knowing_test_name(text)
+            ):
+                session.awaiting_test_category = True
+                await _speak(session, phrase("ask_test_category", lang), lang)
+                return
+            # sourav, 2026-10-14: "remove X", "remove that one", "what is the total" over the tests priced earlier in this
+            # call -- decided here, before the model (which only ever sees this one sentence), and answered from live
+            # lookups. Never while a booking is in progress; anything it is not sure of falls through unchanged.
+            if session.booking is None and session.priced_tests and await _answer_from_priced_list(session, text, lang):
+                return
+            if await _answer_multi_questions(session, text, lang):
+                return  # several questions in one breath: each answered (agent/multi_question.py)
+            if owner_answers.asks_phone_booking(text) and not getattr(session, "phone_booking_told", False):
+                session.phone_booking_told = True  # said once; the booking carries on in the same turn
+                await _speak(session, owner_answers.phone_booking_note(lang), lang)
+            if await _answer_when_repeat(session, text, lang):
+                return
+            if await _answer_after_date(session, text, lang):
+                return  # "any day after the 21st" while a doctor is being booked (owner, 2026-10-19)
+            if await _answer_where_in_address(session, text, lang):
+                return  # a where-question about the address (or the number for the location that follows it) is not an echo of the address (owner, 2026-10-19)
+            if await _answer_scan_followup(session, text, lang):
+                return
+            if owner_answers.branch_identity(text, lang) and not _names_an_offered_doctor(session, text) and await _answer_owner_faq(session, text, lang):
+                return  # "আপনারা কি সোনু স্কান বলছেন" is a question about the clinic's name, answered as such -- not an echo of the greeting (owner, 2026-10-19)
+            if await _answer_word_check(session, text, lang):
+                return
+            if await _answer_prescription(session, text, lang):
+                return
+            if await _answer_route_pushback(session, text, lang):
+                return
+            if getattr(session, "last_spoken", "") and repeat_request.asks_repeat(text):
+                # Owner, 2026-10-30: "sunte pelam na" / "bujhlam na" / "ki bolchen?" / "ar ekbar bolben please" ... -> the LAST LINE again, exactly as it was said
+                logger.info("[%s] the caller asked for the last line again", session.call_id)
+                await _speak(session, session.last_spoken, getattr(session, "tts_output_language", None) or lang, repeat_ok=True)
+                return
+            if await _answer_named_total(session, text, lang):
+                return
+            if await _answer_owner_faq(session, text, lang):
+                return
+            if session.booking is None and await _answer_test_overview(session, text, lang):
+                return
+            if session.booking is None and await _answer_body_imaging(session, text, lang):
+                return
+            if where_doctor_sits.states_a_floor(text) and not _booking_open(session):
+                # Owner, 2026-10-31: "পাঁচতলা" / "দোতালাতে" are about the building, not a request for the address: the caller is asked how the assistant can help with a doctor's appointment
+                await _speak(session, where_doctor_sits.help_reply(lang), lang)
+                return
+            if where_doctor_sits.asks_floor(text) and not _booking_open(session):  # owner, 2026-10-29: which floor does the doctor sit on -> the counter tells
+                await _speak(session, where_doctor_sits.reply(lang), lang)
+                return
+            _update_doctor_subject(session, text, lang)
+            if (_context_doctor_info(session) is not None or getattr(session, "dept_topic", None)) and doctor_facts.asks_quality_bare(text):
+                # Owner, 2026-10-31: "তো কি ভালো" (is he good?) was answered "হ্যাঁ, বলুন।": no doctor is ever called better than another, and the caller is asked for the problem or the department
+                await _speak(session, _with_resume(session, doctor_enquiry_cues.good_doctor_reply([], None, lang), lang), lang)
+                return
+            if await _which_doctor_turn(session, text, lang):
+                return
+            if await _unknown_full_name_turn(session, text, lang):
+                return
+            if await _dept_named_availability_turn(session, text, lang):
+                return
+            if session.booking is None and await _doctor_check_turn(session, text, lang):
+                return
+            if session.booking is None and await _doctor_facts_turn(session, text, lang):
+                return
+            if session.booking is None and await _doctor_when_turn(session, text, lang):
+                return
+            if session.booking is None and await _doctor_name_followup_turn(session, text, lang):
+                return
+            if session.booking is None and await _head_pain_turn(session, text, lang):
+                return
+            if session.booking is None and await _answer_department_doctors(session, text, lang):
+                return
         # sourav, 2026-10-16: what the caller's OWN words settle during a doctor booking (phone digits said in pieces, "double nine",
         # Hindi/Bengali digit words; a yes to a name read back; "the first one" after offered slots) is decided here in code, before
         # the model -- the real call never reached the read-back because phone and name depended on the model alone.
         # agent/booking_capture.py holds the rules; this only speaks what they say.
-        dept_found = None
+        dept_found = early_pick
         _asks_who_sits = (
             session.booking is not None
             and not (session.booking.slots or {}).get("doctor_name")
             and re.search(r"কে (?:আছে|আছেন|বসে|বসেন|বসছে|বসছেন)|কারা|কোন কোন ডাক্তার|\bwho (?:is|sits|are)\b|कौन|which doctors", text, re.I) is not None
         )
-        if session.booking is None or getattr(session, "dept_pending", None) or _asks_who_sits:
+        if early_pick is None and (session.booking is None or getattr(session, "dept_pending", None) or _asks_who_sits):
             dept_found = await _dept_search_turn(session, text, lang)
             if dept_found is True:
                 return
