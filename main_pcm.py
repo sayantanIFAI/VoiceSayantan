@@ -9015,11 +9015,34 @@ def _question_waits() -> dict:
     return data
 
 
+def _last_question_is(session: CallSession, *prompt_keys: str) -> bool:
+    """True when what the agent just said ENDS with one of these booking questions (agent/booking_capture.py's prompts, in any language): the question it is waiting on."""
+    last = (getattr(session, "last_spoken", "") or "").strip()
+    if not last:
+        return False
+    return any(last.endswith(booking_capture.prompt(key, lg).strip()) for key in prompt_keys for lg in ("bn", "hi", "en"))
+
+
+def _answer_completes(kind: str | None, text: str, lang: str) -> bool:
+    """Owner, 2026-11-04 (call 56a625cd: five name answers waited 1.6 s and three age / station answers 2.0 s for a verdict the rules could not give): the words so far are a whole answer to the question
+    that was asked -- a plain name (one to four plain words, agent/booking_capture.plain_name_answer) or an age -- so the caller need not be waited on for more. Only ever shortens a wait."""
+    if kind == "name":
+        return booking_capture.plain_name_answer(text, lang) is not None
+    if kind == "age":
+        return len((text or "").split()) <= 4 and booking_capture.bare_age(text) is not None
+    return False
+
+
 def _expected_answer_kind(session: CallSession) -> str | None:
     """What kind of answer the agent is waiting for: yes_no, age, day, name, phone, address, open (the greeting / "how can I help"), or None (anything else keeps the default wait)."""
     try:
         b = session.booking
         if b is not None:
+            if b.action == "book_appointment" and b.stage == "collecting":
+                if _last_question_is(session, "ask_age"):
+                    return "age"  # (also when the question came with a name read-back: the answer to it is the age)
+                if _last_question_is(session, "ps_ask", "ps_again"):
+                    return "name"  # a police station is a short place name, waited for like a name
             if b.stage in ("confirming", "awaiting_charge_confirm") or _readback_pending(session):
                 return "yes_no"
             if b.stage == "collecting":
@@ -9145,10 +9168,15 @@ async def _speculative_completeness(session: CallSession, speech_end_abs: float)
         # an emergency phrase in what has been said so far ends the wait at once: the turn is treated as
         # finished so the notice is not delayed by a silence timer (agent/emergency.py)
         verdict = "complete" if detect_emergency(asr.text) else ("certain" if is_certain(asr.text, session.lang) else classify_completeness(asr.text, session.lang))
+        answer_fits = False
+        if verdict == "unknown" and _flag_on("ANSWER_KIND_VERDICT", "/workspace/.answer_kind_off"):
+            answer_fits = _answer_completes(_expected_answer_kind(session), asr.text, session.lang)
+            if answer_fits:
+                verdict = "complete"  # a plain name / age, to the question that asks for one: nothing more is coming (kill file /workspace/.answer_kind_off)
         if verdict == "unknown" and not _busy_for_speculation():
             if await _llm_completeness(asr.text, session.lang) == "complete":
                 verdict = "complete"  # the rules could not tell; the model says the sentence is finished (this only ever shortens the wait)
-        if verdict != "certain":
+        if verdict != "certain" and not answer_fits:  # (a name or an age is read by rule: the intent model is not needed for it)
             _pre = asyncio.ensure_future(_preempt_intent(session, asr.text, session.lang))
             _pre.add_done_callback(lambda f: f.cancelled() or f.exception())
     except Exception as e:  # noqa: BLE001 - speculation is advisory
