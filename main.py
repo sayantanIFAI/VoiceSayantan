@@ -10908,6 +10908,21 @@ async def _day_part_sitting_reply(session: CallSession, text: str, lang: str, de
     if not sitting:
         return await _say_nobody_then_next(session, dept_name, lang, None, iso, when_words, label)
     fits = [s for s in sitting if doctor_search.sits_in_part(s.get("start"), s.get("end"), part) and (not after or (s.get("end") or "99:99") > after)]
+    none_in_part = ""
+    if part and sitting and not fits:
+        # Owner, 2026-11-04 (বিকাল is 3 to 5 pm, the cardiologists sit from 6 pm): nobody sits in the part of the day asked, but doctors DO sit that day at other hours -- say so, then who they are and when
+        # (never "no free time is left", which would say they are full).
+        others = [s for s in sitting if not after or (s.get("end") or "99:99") > after]
+        if others and await _available_sitting(others, iso, None, after):
+            none_in_part = {
+                "bn": f"{when_words} {label} বিভাগে কেউ বসেন না।",
+                "hi": f"{when_words} {label} विभाग में कोई नहीं बैठता।",
+                "en": f"Nobody in {label} sits {when_words}.",
+            }[lg]
+            fits, part = others, None
+            when_words = _when_phrase(iso, None, lang) + (
+                {"bn": f" {after}-এর পর", "hi": f" {after} के बाद", "en": f" after {after}"}[lg] if after else ""
+            )
     avail = await _available_sitting(fits, iso, part, after) if fits else []
     if not avail:
         full = {
@@ -10920,6 +10935,8 @@ async def _day_part_sitting_reply(session: CallSession, text: str, lang: str, de
         await _say(session, full, lang)
         return True
     say = doctor_search.sitting_list_reply(avail, when_words, label, lang)
+    if none_in_part:
+        say = f"{none_in_part} {say}"
     if _is_existence_question(text):
         say = f"{_exists_lead(label, lang)} {say}"  # owner, 2026-10-31: "is there a <department> doctor?" is answered "হ্যাঁ, <department> বিভাগের ডাক্তার আছেন।" first
     if len(avail) == 1:
