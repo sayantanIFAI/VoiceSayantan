@@ -1,5 +1,6 @@
 """agent/bn_glide_rules.py: shape rules for য় / ড়, all off unless BN_GLIDE_RULES chooses a variant; a word a listener already decided is never touched."""
 
+import os
 import unicodedata
 
 import pytest
@@ -33,7 +34,14 @@ def test_each_variant_rewrites_its_class(monkeypatch):
         "before_vowel=sep": {"কয়েক": "কয়এক", "দয়া": "দয়আ"},
         "before_vowel=iy": {"কয়েক": "কইয়েক"},
         "after_i=iiy": {"নিয়ে": "নিইয়ে", "দিয়ে": "দিইয়ে"},
-        "after_aa_o=i": {"মাথায়": "মাথাই", "কোথায়": "কোথাই", "গায়ে": "গাইয়ে", "মেয়ে": "মেইয়ে", "পেয়েছি": "পেইয়েছি", "দেয়": "দেই"},
+        "after_aa_o=i": {
+            "মাথায়": "মাথাই",
+            "কোথায়": "কোথাই",
+            "গায়ে": "গাইয়ে",
+            "মেয়ে": "মেইয়ে",
+            "পেয়েছি": "পেইয়েছি",
+            "দেয়": "দেই",
+        },
         "owa=oa": {"দেওয়া": "দেওআ", "পাওয়া": "পাওআ"},
         "owa=waa": {"দেওয়া": "দেওয়াা"},
         "ra=nasal": {"বাড়ি": "বাঁড়ি", "ছাড়া": "ছাঁড়া"},
@@ -52,7 +60,7 @@ def test_a_precomposed_y_is_found_too(monkeypatch):
 
 def test_words_a_listener_decided_are_never_touched(monkeypatch):
     monkeypatch.setenv("BN_GLIDE_RULES", "coda=oi,before_vowel=sep,after_i=iiy,after_aa_o=i,owa=oa,ra=nasal")
-    for word in ("হয়", "গিয়ে", "ছয়", "নয়", "থাইরয়েড", "হোয়াটসঅ্যাপ", "পঁয়ত্রিশ", "অ্যাপয়েন্টমেন্ট"):
+    for word in ("গিয়ে", "থাইরয়েড", "হোয়াটসঅ্যাপ", "পঁয়ত্রিশ", "অ্যাপয়েন্টমেন্ট"):
         assert bn_glide_rules.rewrite(word) == word, word
     # the explicit listener table still wins over a rule
     assert (
@@ -89,4 +97,64 @@ def test_classify_lists_the_classes_a_word_belongs_to():
     assert bn_glide_rules.classify("সময়") == ["coda"]
     assert bn_glide_rules.classify("নেওয়া") == ["owa"]
     assert bn_glide_rules.classify("সাড়া") == ["ra"]
-    assert bn_glide_rules.classify("হয়") == [] and bn_glide_rules.classify("আপনার") == []
+    assert bn_glide_rules.classify("হয়") == ["coda"]  # released from the protected list on 2026-11-04 (the listener wants it respelled)
+    assert bn_glide_rules.classify("গিয়ে") == [] and bn_glide_rules.classify("আপনার") == []
+
+
+E_RULES = {"coda": "e", "before_vowel": "e", "after_aa_o": "e"}
+
+
+def test_the_glide_is_written_as_the_vowel_e(monkeypatch):
+    """Owner, 2026-11-04: নয় -> নএ, and so on for the words of the same shape."""
+    monkeypatch.setenv("BN_GLIDE_RULES", "coda=e,before_vowel=e,after_aa_o=e")
+    expected = {
+        "নয়": "নএ",
+        "ছয়": "ছএ",
+        "হয়": "হএ",
+        "ভয়": "ভএ",
+        "বয়স": "বএস",
+        "সঞ্জয়": "সঞ্জএ",  # a glide at the end of a syllable
+        "হয়েছে": "হএছে",
+        "দয়া": "দএআ",
+        "বিষয়ে": "বিষএ",  # a glide before a vowel (ে is not written twice)
+        "মাথায়": "মাথাএ",
+        "যায়": "যাএ",
+        "কোথায়": "কোথাএ",
+        "মেয়ে": "মেএ",
+        "পেয়েছি": "পেএছি",
+        "দেয়": "দেএ",  # after া / ো / ে
+    }
+    for word, spelling in expected.items():
+        assert bn_glide_rules.rewrite(word) == nfc(spelling), word
+
+
+def test_the_digits_are_no_longer_protected_but_decided_words_stay(monkeypatch):
+    monkeypatch.setenv("BN_GLIDE_RULES", "coda=e,before_vowel=e,after_aa_o=e")
+    assert bn_respell.respell("নয়") == "নএ" and bn_respell.respell("ছয়") == "ছএ" and bn_respell.respell("হয়") == "হএ"
+    assert bn_respell.respell("সময়") == "শমএ"  # the স -> শ rule first, then the glide
+    for kept in ("কয়েক", "নিয়ে", "সময়টা", "জয়দীপ", "গিয়ে", "থাইরয়েড"):
+        assert bn_respell.respell(kept) == bn_respell.respell(
+            kept
+        )  # a decided word is returned by its own rule, never rewritten a second time
+    assert (
+        bn_respell.respell("জয়দীপ") == "জয় দীপ"
+        and bn_respell.respell("কয়েক") == "কয়এক"
+        and bn_respell.respell("নিয়ে") == "নিইয়ে"
+    )
+
+
+def test_the_rules_can_be_switched_on_from_a_data_file(monkeypatch, tmp_path):
+    path = tmp_path / "glide_rules.json"
+    monkeypatch.setattr(bn_glide_rules, "RULES_FILE", str(path))
+    monkeypatch.setitem(bn_glide_rules._FILE_CACHE, "mtime", None)  # noqa: SLF001
+    monkeypatch.setitem(bn_glide_rules._FILE_CACHE, "data", {})  # noqa: SLF001
+    assert bn_glide_rules.active() == {} and bn_glide_rules.rewrite("নয়") == "নয়"
+    path.write_text('{"coda": "e", "nosuch": "x", "ra": "bad"}', encoding="utf-8")
+    os.utime(path, (2_000_000, 2_000_000))
+    assert bn_glide_rules.active() == {"coda": "e"} and bn_glide_rules.rewrite("নয়") == "নএ"
+    monkeypatch.setenv("BN_GLIDE_RULES", "coda=oi")  # the environment is put on top of the file
+    assert bn_glide_rules.rewrite("নয়") == nfc("নোই")
+    monkeypatch.delenv("BN_GLIDE_RULES")
+    path.write_text("not json", encoding="utf-8")
+    os.utime(path, (2_000_100, 2_000_100))
+    assert bn_glide_rules.active() == {}

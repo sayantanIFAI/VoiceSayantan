@@ -4,14 +4,16 @@ The Bengali voice is a character-level FastPitch (no pronunciation layer), so th
 listeners; the same few shapes keep coming back (সময়টা, কয়েক, নিয়ে, নেওয়া, সাড়া). A rule here rewrites every word of a shape at once, so a new word needs no new listener round.
 
 NOTHING IS ON BY DEFAULT. Each class has candidate rewrites (VARIANTS) taken from what listeners chose word by word, but a class is only a hypothesis until a native listener has heard it on MANY
-words of that class (tools/glide_rules_pack.py builds the numbered audio). Turn a class on with BN_GLIDE_RULES, e.g. "coda=oi,owa=oa,ra=nasal"; unset or empty = this module changes nothing. Words a
-listener already decided (the explicit table in bn_respell, and the "leave alone" list below: digits, loanwords, হয়/গিয়ে which the listener kept as written) are never touched.
+words of that class (tools/glide_rules_pack.py builds the numbered audio). Turn a class on in /workspace/glide_rules.json ({"coda": "e"}; read again whenever it changes) or with BN_GLIDE_RULES, e.g. "coda=oi,owa=oa,ra=nasal";
+neither set = this module changes nothing. Owner, 2026-11-04: the glide is written as the independent vowel এ ("e" in coda, before_vowel and after_aa_o: নয়->নএ, ছয়->ছএ, সময়ে->শমএ, মাথায়->মাথাএ). Words a
+listener already decided (the explicit table in bn_respell, and the "leave alone" list below: some number words, loanwords, গিয়ে) are never touched.
 
 The classes are decided from the NFC spelling, where য় is য + nukta (the voice reads both Unicode forms the same; measured on the pod, 2026-11-04).
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import unicodedata
@@ -30,13 +32,18 @@ _INDEPENDENT = {"া": "আ", "ি": "ই", "ী": "ঈ", "ু": "উ", "ূ": "
 LEAVE_ALONE = frozenset(
     unicodedata.normalize("NFC", w)
     for w in """
-    হয় গিয়ে ছয় নয় দুয় পঁয়ত্রিশ পঁয়তাল্লিশ চুয়াল্লিশ বিয়াল্লিশ ছিয়ানব্বই ছিয়াশি ছিয়াত্তর ছিয়াত্তর পঁয়ষট্টি সাতচল্লিশ
+    গিয়ে দুয় পঁয়ত্রিশ পঁয়তাল্লিশ চুয়াল্লিশ বিয়াল্লিশ ছিয়ানব্বই ছিয়াশি ছিয়াত্তর ছিয়াত্তর পঁয়ষট্টি সাতচল্লিশ
     থাইরয়েড থাইরোয়েড টাইফয়েড হোয়াটসঅ্যাপ হোয়াটসঅ্যাপে হোয়াট ওয়ান ওয়াই হ্যায় হ্যায় সিরিয়াল ম্যালেরিয়া ক্রিয়েটিনিন ক্যালসিয়াম ফিজিশিয়ান ফিজিসিয়ান পেডিয়াট্রিক্স পিরিয়ড
     জয়েন্ট কেয়ার কেয়া অ্যাপয়েন্টমেন্ট অ্যাপয়েন্টমেন্টটা অ্যাপয়েন্টমেন্টের ডায়াবেটিস ডায়াবিটিস
     """.split()
 )
 
 _RULE_ENV = "BN_GLIDE_RULES"
+
+
+def _glide_vowel(sign: str) -> str:
+    """The vowel that follows a glide written as the independent vowel এ: the vowel sign said out in full, except ে, which এ already is (সময়ে -> সমএ, not সমএএ)."""
+    return "" if sign == "\u09c7" else _INDEPENDENT[sign]
 
 
 def _swap(pattern: str, repl: str | Callable) -> Callable[[str], str]:
@@ -63,16 +70,24 @@ VARIANTS: dict[str, dict[str, Callable[[str], str]]] = {
         "i": _swap(
             "([াোে])" + _Y + "(" + _SIGN + ")?", lambda m: m.group(1) + "ই" + (_Y + m.group(2) if m.group(2) else "")
         ),
+        "e": _swap(
+            "([াোে])" + _Y + "(" + _SIGN + ")?",
+            lambda m: m.group(1) + "এ" + (_glide_vowel(m.group(2)) if m.group(2) else ""),
+        ),
     },
     "before_vowel": {
         "sep": _swap(
             "(" + _CONSONANT + ")" + _Y + "(" + _SIGN + ")", lambda m: m.group(1) + _Y + _INDEPENDENT[m.group(2)]
         ),
         "iy": _swap("(" + _CONSONANT + ")" + _Y + "(?=" + _SIGN + ")", r"\1ই" + _Y),
+        "e": _swap(
+            "(" + _CONSONANT + ")" + _Y + "(" + _SIGN + ")", lambda m: m.group(1) + "এ" + _glide_vowel(m.group(2))
+        ),
     },
     "coda": {
         "oi": _swap("(" + _CONSONANT + ")" + _Y + "(?!" + _VOWEL_NEXT + ")", lambda m: m.group(1) + "ো" + "ই"),
         "i": _swap("(" + _CONSONANT + ")" + _Y + "(?!" + _VOWEL_NEXT + ")", lambda m: m.group(1) + "ই"),
+        "e": _swap("(" + _CONSONANT + ")" + _Y + "(?!" + _VOWEL_NEXT + ")", lambda m: m.group(1) + "এ"),
     },
     "ra": {
         "nasal": _swap("(া)(?=[ডঢ]" + _NUKTA + ")", "াঁ"),
@@ -89,9 +104,34 @@ def classes() -> tuple[str, ...]:
     return _ORDER
 
 
+RULES_FILE = os.environ.get("BN_GLIDE_FILE", "/workspace/glide_rules.json")
+_FILE_CACHE: dict = {"mtime": None, "data": {}}
+
+
+def _from_file() -> dict[str, str]:
+    """{class: variant} from the data file (read again whenever it changes), so a listener's choice takes effect without a restart or a change to the environment the services were started with."""
+    try:
+        mtime = os.path.getmtime(RULES_FILE) if os.path.exists(RULES_FILE) else None
+    except OSError:
+        mtime = None
+    if _FILE_CACHE["mtime"] == mtime:
+        return _FILE_CACHE["data"]
+    data: dict[str, str] = {}
+    if mtime is not None:
+        try:
+            with open(RULES_FILE, encoding="utf-8") as fh:
+                for cls, variant in (json.load(fh) or {}).items():
+                    if cls in VARIANTS and variant in VARIANTS[cls]:
+                        data[cls] = variant
+        except (OSError, ValueError, AttributeError, TypeError):
+            data = {}
+    _FILE_CACHE["mtime"], _FILE_CACHE["data"] = mtime, data
+    return data
+
+
 def active() -> dict[str, str]:
-    """{class: variant} from BN_GLIDE_RULES ("coda=oi,owa=oa"); an unknown class or variant is ignored (a typo turns a rule off, never breaks a reply)."""
-    chosen: dict[str, str] = {}
+    """{class: variant}: the data file (/workspace/glide_rules.json, {"coda": "e", ...}) with BN_GLIDE_RULES ("coda=e,owa=oa") on top; an unknown class or variant is ignored (a typo turns a rule off, never breaks a reply)."""
+    chosen: dict[str, str] = dict(_from_file())
     for part in os.environ.get(_RULE_ENV, "").split(","):
         cls, _, variant = part.strip().partition("=")
         if cls in VARIANTS and variant in VARIANTS[cls]:
