@@ -2243,6 +2243,23 @@ async def _slice_utterance(session: CallSession, start_s: float, end_s: float, s
     return clip_path
 
 
+async def _asr_input_wav(session: CallSession, wav_path: str) -> tuple[str, list[str]]:
+    """The clip as the recognisers should read it: attended to the caller's voice and, when switched on, conditioned. (path to read, temporary files the caller must delete).
+    The turn and the speculative transcription made during the silence wait both go through this, so the two read the SAME audio and a speculative transcript can stand in for the turn's own."""
+    asr_wav, temp_wavs = wav_path, []
+    if NEAR_END_ATTENTION != "off" and session.near_end.established:
+        attended = await asyncio.to_thread(_attend_wav_to_path, wav_path, session.near_end.level_dbfs, session.near_end.f0_hz or 0.0)
+        if attended:
+            temp_wavs.append(attended)
+            asr_wav = attended
+    if CONDITION_INPUT != "off" or session.noise_suppress:
+        conditioned = await asyncio.to_thread(_condition_wav_to_path, asr_wav, CONDITION_INPUT if CONDITION_INPUT != "off" else "full")
+        if conditioned:
+            temp_wavs.append(conditioned)
+            asr_wav = conditioned
+    return asr_wav, temp_wavs
+
+
 # KCD-101: the whole wall-clock a caller may wait for "what do they want" (cache lookup + model, all attempts)
 # before the apology is spoken. Equal to the model's own default deadline (agent/llm.py, 12 s, REASONED, not
 # measured on real telephony). The holding phrase is spoken once FILLER_THRESHOLD_S has passed without an answer.
@@ -2362,6 +2379,8 @@ async def _resolve_intent_uncached(session: CallSession, text: str, lang: str, k
                     _saved = asyncio.ensure_future(asyncio.to_thread(_intent_cache.put, key, _pdata))
                     _saved.add_done_callback(lambda f: f.cancelled() or f.exception())
                     return _pdata
+        else:
+            logger.info("[%s] preemptive intent not used: the sentence read early (%r) is not the final one (%r)", session.call_id, pre.get("key"), key)
     budget_left = left()
     if budget_left < MIN_MODEL_BUDGET_S:
         raise ExtractionError(f"intent budget of {INTENT_BUDGET_S}s used up before the model was asked")
@@ -6324,8 +6343,16 @@ async def _route_and_transcribe_inner(session: CallSession, utterance_wav: str):
     tasks: dict[str, asyncio.Future] = {}
     took: dict[str, float] = {}
 
+    reuse = getattr(session, "reuse_asr", None)  # the speculative transcript of this very clip, when _usable_speculation accepted it
+
     def start(lang: str) -> None:
         if lang in tasks or lang not in _languages_active:
+            return
+        if reuse is not None and reuse["lang"] == lang:
+            done = asyncio.get_running_loop().create_future()
+            done.set_result(reuse["result"])
+            tasks[lang] = done
+            took[lang] = 0.0
             return
 
         async def run(lang=lang):
@@ -6487,6 +6514,30 @@ async def _route_and_transcribe_inner(session: CallSession, utterance_wav: str):
     return chosen, result, (agree >= LOW_AGREEMENT_FOR_LOCK) if chosen in ("bn", "hi") else True
 
 
+SPECULATIVE_REUSE_TOLERANCE_S = float(os.environ.get("SPECULATIVE_REUSE_TOLERANCE_S", "0.15"))
+
+
+def _usable_speculation(session: CallSession, spec: dict | None) -> dict | None:
+    """The speculative transcription made during the silence wait, when it read THIS turn's clip: the same start, and an end within SPECULATIVE_REUSE_TOLERANCE_S (the speculation only
+    starts after 0.3 s of silence, so any further word the caller said would have moved the end by more than that). Then the turn does not read the clip again with that recogniser, and the
+    intent model's early answer (agent _preempt_intent) is for the very same words. Kill file /workspace/.speculative_reuse_off, or SPECULATIVE_REUSE=0, switches it off at once.
+    Every case is logged, so the hit rate can be read from the log."""
+    if spec is None:
+        return None
+    end = getattr(session, "last_commit_end_abs", None)
+    start = getattr(session, "last_commit_start_abs", None)
+    if end is None or start is None:
+        return None
+    gap = abs(float(spec["end"]) - float(end))
+    if abs(float(spec["start"]) - float(start)) > 0.001 or gap > SPECULATIVE_REUSE_TOLERANCE_S:
+        logger.info("[%s] speculative transcript not used: it read a different stretch (start %.2fs apart, end %.2fs apart)", session.call_id, abs(float(spec["start"]) - float(start)), gap)
+        return None
+    if not _flag_on("SPECULATIVE_REUSE", "/workspace/.speculative_reuse_off"):
+        return None
+    logger.info("[%s] speculative transcript used: the clip was already read during the wait (%s, end %.2fs apart)", session.call_id, spec["lang"], gap)
+    return spec
+
+
 async def _dispatch_turn(session: CallSession, utterance_wav: str):
     """One full turn: LID -> ASR -> intent -> tool -> templated reply -> TTS.
     Serialized per-call via session.dispatch_lock so replies never
@@ -6516,18 +6567,10 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
         asr_wav = utterance_wav
         temp_wavs: list[str] = []
         try:
-            if NEAR_END_ATTENTION != "off" and session.near_end.established:
-                attended = await asyncio.to_thread(
-                    _attend_wav_to_path, utterance_wav, session.near_end.level_dbfs, session.near_end.f0_hz or 0.0
-                )
-                if attended:
-                    temp_wavs.append(attended)
-                    asr_wav = attended
-            if CONDITION_INPUT != "off" or session.noise_suppress:
-                conditioned = await asyncio.to_thread(_condition_wav_to_path, asr_wav, CONDITION_INPUT if CONDITION_INPUT != "off" else "full")
-                if conditioned:
-                    temp_wavs.append(conditioned)
-                    asr_wav = conditioned
+            asr_wav, temp_wavs = await _asr_input_wav(session, utterance_wav)
+            _spec = getattr(session, "spec_asr", None)
+            session.spec_asr = None
+            session.reuse_asr = _usable_speculation(session, _spec)
             _mark(session, "prep")
             _keep_recent_utterance(session, utterance_wav)
             # Owner's latency review, 2026-11-04: the two clip analyses read only the clip, not the transcript, so they run while the recognisers work (they used to wait until recognition was over).
@@ -9048,8 +9091,16 @@ async def _speculative_completeness(session: CallSession, speech_end_abs: float)
     wav = None
     try:
         session.utt_seq += 1
-        wav = await _slice_utterance(session, session.processed_until_s, speech_end_abs, session.utt_seq)
-        asr = await asyncio.wait_for(_asr_router.transcribe(session.lang, wav), SPECULATIVE_ASR_TIMEOUT_S)
+        spec_start_abs = session.processed_until_s
+        wav = await _slice_utterance(session, spec_start_abs, speech_end_abs, session.utt_seq)
+        spec_wav, spec_temps = await _asr_input_wav(session, wav)  # the same preparation the turn applies: the same audio gives the same words
+        try:
+            asr = await asyncio.wait_for(_asr_router.transcribe(session.lang, spec_wav), SPECULATIVE_ASR_TIMEOUT_S)
+        finally:
+            for extra in spec_temps:
+                with contextlib.suppress(OSError):
+                    os.remove(extra)
+        session.spec_asr = {"start": spec_start_abs, "end": speech_end_abs, "lang": session.lang, "result": asr}  # the turn may use it instead of reading the clip again (_usable_speculation)
         # an emergency phrase in what has been said so far ends the wait at once: the turn is treated as
         # finished so the notice is not delayed by a silence timer (agent/emergency.py)
         verdict = "complete" if detect_emergency(asr.text) else ("certain" if is_certain(asr.text, session.lang) else classify_completeness(asr.text, session.lang))
@@ -9111,6 +9162,7 @@ async def _decide_turn(session: CallSession, tail, sr: int):
         )
         session.pause.observe_utterance(spans, upto_s=decision.utterance_end_s)
         session.last_confirm_s = decision.confirm_s or cfg.silence_confirm_s
+        session.last_commit_start_abs = session.processed_until_s
         session.last_commit_end_abs = session.processed_until_s + float(decision.utterance_end_s)
         session.agent_spoke_since_commit = False
         session.commit_checked = False
