@@ -37,3 +37,17 @@ def test_the_sitting_sentence_names_the_doctors_department_and_asks_to_book():
     assert "অ্যাপয়েন্টমেন্ট" not in say
     moved = slot_proposal.sits_statement("পার্থ রায়", "2026-11-07", "10:00", "bn", now=NOW, moved=True, asked_date="2026-11-05", dept="ডায়াবেটোলজি ও এন্ডোক্রিনোলজি")
     assert "ডায়াবেটোলজি ও এন্ডোক্রিনোলজি বিভাগের ডাক্তার পার্থ রায়" in moved and moved.endswith("বুক করব?")
+
+
+def test_book_sinha_is_not_the_clinics_name():
+    # Owner, 2026-11-04: after "কুণাল সিনহা, অভিজিৎ সরকার. কাকে দেখাতে চান?" the answer "সিনহাকে করে দিন" was answered "you are speaking to Sonoscan Kolkata" (it sounded S-N-K-N)
+    from agent import doctor_search, owner_answers
+
+    for text in ("সিনহাকে করে দিন", "সিনহাকে বুক করুন", "সরকারকে করে দিন"):
+        assert not owner_answers.branch_identity(text, "bn"), text
+    offered = [["কুণাল সিনহা", "Dr. Kunal Sinha"], ["অভিজিৎ সরকার", "Dr. Abhijit Sarkar"]]
+    assert doctor_search.choose_by_name("সিনহাকে করে দিন", offered) == 0
+    assert doctor_search.choose_by_name("সরকারকে করে দিন", offered) == 1
+    # the clinic's name still is the clinic's name, in the spellings a recogniser gives it
+    for text in ("সোনোস্ক্যান কলকাতা?", "এটা কি সোনো স্ক্যান", "সোনস্থান", "sonoscan malda"):
+        assert owner_answers.branch_identity(text, "bn"), text

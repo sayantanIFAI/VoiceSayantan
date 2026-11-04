@@ -117,7 +117,8 @@ def _mentions_sonoscan(t: str) -> bool:
                 continue  # a long word in the middle is a different word, not a piece of the name
             # ল and ন are folded together: "শোনো স্কাল" for "সোনোস্ক্যান" (owner, 2026-10-30, "ha eta Sonoscan") is the same name heard with a final l
             snd = _sound("".join(tokens[i : i + width])).replace("L", "N").replace("R", "N")  # owner, 2026-11-03: "শুনস্কার" is the name heard with a final r (r and l are folded into n)
-            if 4 <= len(snd) <= 6 and difflib.SequenceMatcher(None, snd, _SONOSCAN_SOUND).ratio() >= 0.85:
+            # (owner, 2026-11-04: "সিনহাকে করে দিন" -- "book Sinha" -- sounded S-N-K-N and was taken for the clinic's name. The name has TWO s sounds, S-N-S-K-N; a word run with only one is another word.)
+            if 4 <= len(snd) <= 6 and snd.count("S") >= 2 and difflib.SequenceMatcher(None, snd, _SONOSCAN_SOUND).ratio() >= 0.85:
                 return True
     return False
 

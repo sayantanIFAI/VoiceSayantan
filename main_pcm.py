@@ -4357,6 +4357,19 @@ async def _next_sitting_offer(dept: str, label: str, lang: str) -> dict | None:
 _PICK_MEMORY_TURNS = 10**6
 
 
+def _names_an_offered_doctor(session: CallSession, text: str) -> bool:
+    """Owner, 2026-11-04 (offered "কুণাল সিনহা, অভিজিৎ সরকার. কাকে দেখাতে চান?" -- "সিনহাকে করে দিন" was answered "you are speaking to Sonoscan Kolkata"): while a question about the doctors just offered is open,
+    an answer that names one of them is that choice -- decided FIRST, before any guess that the sentence is about the clinic's name, a test or anything else."""
+    pend = getattr(session, "dept_pending", None)
+    docs: list[dict] = []
+    if pend and session.turn_count - pend.get("turn", -99) <= _PICK_MEMORY_TURNS:
+        docs = list(pend.get("doctors") or ([pend["doctor"]] if pend.get("doctor") else []))
+    if docs:
+        with contextlib.suppress(Exception):
+            return doctor_search.choose_by_name(text, [[d.get("name", ""), d.get("full_name", "")] for d in docs]) is not None
+    return False
+
+
 async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict | bool:
     """Finding the doctor from how the caller asks (agent/doctor_search.py):
       * the answer to "neurologist or neurosurgeon?" / "which of these doctors?" asked a moment ago;
@@ -7215,7 +7228,7 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             return  # a where-question about the address (or the number for the location that follows it) is not an echo of the address (owner, 2026-10-19)
         if await _answer_scan_followup(session, text, lang):
             return
-        if owner_answers.branch_identity(text, lang) and await _answer_owner_faq(session, text, lang):
+        if owner_answers.branch_identity(text, lang) and not _names_an_offered_doctor(session, text) and await _answer_owner_faq(session, text, lang):
             return  # "আপনারা কি সোনু স্কান বলছেন" is a question about the clinic's name, answered as such -- not an echo of the greeting (owner, 2026-10-19)
         if await _answer_word_check(session, text, lang):
             return
@@ -9923,7 +9936,7 @@ async def _clinical_and_unrelated_guards(session: CallSession, text: str, lang: 
        a test's own digits are not read as a result). The yes / no that follows is read first on the next turn: yes connects a person, no goes on.
     2. A clear WRONG NUMBER ("sorry, wrong number") when nothing else is open: a kind sentence the first time, a polite close the second consecutive time (agent/unrelated_caller.py).
        Only the wrong-number family is acted on. Its 'a name being asked for' family is NOT used: in Bengali it also matches ordinary answers ("thik ache", "whatsapp ache")."""
-    if session.booking is None and owner_answers.branch_identity(text, lang) and await _answer_owner_faq(session, text, lang):
+    if session.booking is None and owner_answers.branch_identity(text, lang) and not _names_an_offered_doctor(session, text) and await _answer_owner_faq(session, text, lang):
         return True  # owner, 2026-11-03: "Is this Kolkata Sonoscan?" is answered BEFORE the department talk (the clinic's own name sounded like a skin department and the call stayed "Dermatology")
     if session.awaiting_clinician_offer:
         session.awaiting_clinician_offer = False
