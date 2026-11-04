@@ -184,25 +184,59 @@ def filtered_reply(result: dict, sex: str, lang: str, dept_label: str) -> str:
     }[lang]
 
 
-# Owner, 2026-10-30: a list of the doctors who sit is told by the part of the day they START in, with no hours ("সকালে বসছেন A, B আর C, দুপুরে বসছেন D, বিকালে বসছেন E, রাতে বসছেন F"); the time of
-# the doctor the caller chooses is told in the booking. Starts before 12:00 are morning, 12:00-15:00 noon, 15:00 until NIGHT_FROM afternoon ("বিকাল": the owner's example puts a doctor who starts at 18:00 under
-# বিকালে and one who starts at 22:00 under রাতে), NIGHT_FROM onward night. (The caller's own "বিকালের দিকে" filter, part_of_day_of, is unchanged.)
-NIGHT_FROM = 20
-_SPOKEN_PARTS = ("morning", "noon", "afternoon", "night")
+# Owner, 2026-11-04 -- the parts of the day as Bengali people mean them (one set, used for the spoken lists, for the caller's own "বিকালে" filter and for the free-slot filter):
+#   সকাল (morning) before 12:00 | দুপুর (noon) 12:00-15:00 | বিকাল (afternoon) 15:00-17:00 | সন্ধ্যা (evening) 17:00-19:00 | রাত (night) 19:00 on.
+# A list of the doctors who sit is told by the part of the day they START in, with no hours ("সকালে বসছেন A, B আর C, দুপুরে বসছেন D, সন্ধ্যায় বসছেন E, রাতে বসছেন F"); the doctor the caller chooses is told in the
+# booking. (Before this a doctor who starts at 18:00 was put under বিকালে; বিকাল is 3 to 5 pm, and 5 to 7 pm is সন্ধ্যা.)
+PART_HOURS = {"morning": (0, 12), "noon": (12, 15), "afternoon": (15, 17), "evening": (17, 19), "night": (19, 24)}
+NIGHT_FROM = PART_HOURS["night"][0]
+_SPOKEN_PARTS = ("morning", "noon", "afternoon", "evening", "night")
 _SPOKEN_PART_WORD = {
     "morning": {"bn": "সকালে", "hi": "सुबह", "en": "in the morning"},
     "noon": {"bn": "দুপুরে", "hi": "दोपहर में", "en": "around noon"},
-    "afternoon": {"bn": "বিকালে", "hi": "शाम को", "en": "in the afternoon"},
+    "afternoon": {"bn": "বিকালে", "hi": "दोपहर बाद", "en": "in the afternoon"},
+    "evening": {"bn": "সন্ধ্যায়", "hi": "शाम को", "en": "in the evening"},
     "night": {"bn": "রাতে", "hi": "रात में", "en": "at night"},
 }
 
 
-def spoken_part_of(start: str | None) -> str | None:
+def _hour_of(hhmm: str | None) -> int | None:
     try:
-        h = int((start or "").split(":")[0])
+        return int((hhmm or "").split(":")[0])
     except ValueError:
         return None
-    return "morning" if h < 12 else "noon" if h < 15 else "afternoon" if h < NIGHT_FROM else "night"
+
+
+def part_of_hour(h: int) -> str:
+    for part in _SPOKEN_PARTS:
+        lo, hi = PART_HOURS[part]
+        if lo <= h < hi:
+            return part
+    return "night"
+
+
+def spoken_part_of(start: str | None) -> str | None:
+    h = _hour_of(start)
+    return None if h is None else part_of_hour(h)
+
+
+def sits_in_part(start: str | None, end: str | None, part: str | None) -> bool:
+    """True when a chamber (start-end) overlaps the part of the day asked: a doctor who sits 14:00-18:00 is there at noon, in the afternoon and in the evening. With no end time, the start decides."""
+    if not part:
+        return True
+    lo, hi = PART_HOURS.get(part, (0, 24))
+    h0 = _hour_of(start)
+    if h0 is None:
+        return False
+    h1 = _hour_of(end)
+    if h1 is None:
+        return lo <= h0 < hi
+    mins = lambda v: int(v.split(":")[0]) * 60 + int(v.split(":")[1] or 0)  # noqa: E731
+    try:
+        s0, e0 = mins(start), mins(end)
+    except (ValueError, IndexError):
+        return lo <= h0 < hi
+    return s0 < hi * 60 and e0 > lo * 60
 
 
 def grouped_by_part(items: list[dict], lang: str) -> str | None:
@@ -352,14 +386,12 @@ def overview_reply(examples: list[tuple[str, str]], lang: str) -> str:
 _GOOD_AMONG = re.compile(r"(?:ভালো|ভাল|ভাল|অভিজ্ঞ|সেরা)|(?:अच्छा|अच्छे|बेहतर|सबसे अच्छ)|\b(?:good|better|best)\b", re.I)
 _PARTS = {
     "morning": ("সকাল", "ভোর", "सुबह", "सवेरे", "morning"),
-    "afternoon": ("দুপুর", "दोपहर", "afternoon"),
-    "evening": ("বিকেল", "বিকাল", "সন্ধ্যা", "সন্ধ্যে", "রাত", "शाम", "रात", "evening", "night"),
+    "noon": ("দুপুর", "दोपहर", "noon", "midday"),
+    "afternoon": ("বিকেল", "বিকাল", "afternoon"),
+    "evening": ("সন্ধ্যা", "সন্ধ্যে", "সন্ধে", "शाम", "evening"),
+    "night": ("রাত", "रात", "night"),
 }
-_PART_WORD = {
-    "morning": {"bn": "সকালে", "hi": "सुबह", "en": "in the morning"},
-    "afternoon": {"bn": "দুপুরে", "hi": "दोपहर में", "en": "in the afternoon"},
-    "evening": {"bn": "সন্ধ্যায়", "hi": "शाम को", "en": "in the evening"},
-}
+_PART_WORD = _SPOKEN_PART_WORD
 
 
 def asked_part_of_day(text: str) -> str | None:
@@ -383,7 +415,7 @@ def part_of_day_of(start: str | None) -> str | None:
         h = int((start or "").split(":")[0])
     except ValueError:
         return None
-    return "morning" if h < 12 else "afternoon" if h < 16 else "evening"
+    return part_of_hour(h)
 
 
 def _with_hours(item: dict) -> str:
@@ -398,7 +430,7 @@ def offered_followup_reply(items: list[dict], part: str | None, good: bool, lang
     names = "; ".join(_with_hours(i) for i in items)
     lead = {"bn": "আমাদের সব ডাক্তারই ভালো। ", "hi": "हमारे सभी डॉक्टर अच्छे हैं। ", "en": "All our doctors are good. "}[lg] if good else ""
     if part:
-        fits = [i for i in items if part_of_day_of(i.get("start")) == part]
+        fits = [i for i in items if sits_in_part(i.get("start"), i.get("end"), part)]
         word = _PART_WORD[part][lg]
         if len(fits) == 1:
             one = fits[0]

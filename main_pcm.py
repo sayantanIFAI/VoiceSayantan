@@ -4493,7 +4493,7 @@ async def _dept_day_listing(session: CallSession, text: str, lang: str, sex: str
         sitting = result.get("sitting") or []
         _part = doctor_search.asked_part_of_day(text)
         if _part:
-            sitting = [s for s in sitting if doctor_search.part_of_day_of(s.get("start")) == _part]  # owner, 2026-10-28: "আজকে কে বসছে বিকালের দিকে"
+            sitting = [s for s in sitting if doctor_search.sits_in_part(s.get("start"), s.get("end"), _part)]  # owner, 2026-10-28: "আজকে কে বসছে বিকালের দিকে"
         if sitting and on_date and not at_time:
             # Owner, 2026-10-30: "who is available today in General Medicine" -- only the doctors who sit AND still have a free slot, never the whole timetable; if none has: no free time, then who sits next
             _avail = await _available_sitting(sitting, on_date, _part)
@@ -10909,15 +10909,13 @@ async def _day_part_sitting_reply(session: CallSession, text: str, lang: str, de
     label = _dept_label(dept_name, lang)
     lg = lang if lang in ("bn", "hi") else "en"
     part_word = doctor_search._PART_WORD[part][lg] if part else ""  # noqa: SLF001
-    if part == "evening" and lg == "bn" and "বিকাল" in text:
-        part_word = "বিকালে"  # owner, 2026-11-04: said "বিকালবেলা" (afternoon), told "সন্ধ্যায়" (evening): the caller's own word is used
     when_words = _when_phrase(iso, None, lang) + (f" {part_word}" if part else "")
     if after:
         when_words += {"bn": f" {after}-এর পর", "hi": f" {after} के बाद", "en": f" after {after}"}[lg]
     sitting = r.get("sitting") or []
     if not sitting:
         return await _say_nobody_then_next(session, dept_name, lang, None, iso, when_words, label)
-    fits = [s for s in sitting if (not part or doctor_search.part_of_day_of(s.get("start")) == part) and (not after or (s.get("end") or "99:99") > after)]
+    fits = [s for s in sitting if doctor_search.sits_in_part(s.get("start"), s.get("end"), part) and (not after or (s.get("end") or "99:99") > after)]
     avail = await _available_sitting(fits, iso, part, after) if fits else []
     if not avail:
         full = {
