@@ -675,3 +675,28 @@ def asks_visit_fee(text: str) -> bool:
     if "visit" in t and not _has(t, ("fee", "fees", "charge", "charges", "cost", "price", "how much", "কত", "কতো", "क्या", "कितना", "कितने")):
         return False
     return _has(t, _FEE_CONTEXT) and _has(t, _PRICE_WORD)
+
+
+# Owner, 2026-11-04 ("সোনা স্কাম কত সালে প্রতিষ্ঠা হয়েছে" -- in which year was Sonoscan founded -- was answered with the opening hours): the clinic's founding year is in no table the agent reads, so it is not told --
+# the agent says it does not have it. (Add the year to the clinic FAQ and this answer can be replaced by the fact.)
+_FOUNDED_STRONG = re.compile(r"প্রতিষ্ঠা|প্রতিষ্ঠিত|স্থাপিত|স্থাপনা|स्थापना|स्थापित|\b(?:established|founded)\b", re.I)
+_FOUNDED_WEAK = re.compile(r"কত সালে|কোন সালে|কত বছর (?:ধরে|আগে|হলো|হল)|किस साल|कब शुरू हुआ|\b(?:since when|which year|what year|how old is)\b", re.I)
+_CLINIC_WORD = re.compile(r"সোনো|সোনা|ক্লিনিক|আপনাদের|আপনারা|হাসপাতাল|সেন্টার|সোনোস্ক্যান|sono|clinic|hospital|centre|center|क्लिनिक|सोनो|अस्पताल", re.I)
+_FOUNDED_REPLY = {
+    "bn": "সোনোস্ক্যান কত সালে প্রতিষ্ঠা হয়েছে, সেই তথ্য আমার কাছে নেই। অন্য কোনো প্রশ্ন থাকলে বলুন।",
+    "hi": "सोनोस्कैन कब स्थापित हुआ, यह जानकारी मेरे पास नहीं है। कोई और सवाल हो तो बताइए।",
+    "en": "I do not have the year Sonoscan was founded. Is there anything else I can help with?",
+}
+
+
+def asks_founding_year(text: str) -> bool:
+    t = text or ""
+    if len(t.split()) > 16:
+        return False
+    if _FOUNDED_STRONG.search(t):
+        return not re.search(r"ডাক্তার|डॉक्टर|doctor", t, re.I) or bool(_CLINIC_WORD.search(t))
+    return bool(_FOUNDED_WEAK.search(t)) and bool(_CLINIC_WORD.search(t))
+
+
+def founding_year_reply(lang: str) -> str:
+    return _FOUNDED_REPLY.get(lang, _FOUNDED_REPLY["en"])

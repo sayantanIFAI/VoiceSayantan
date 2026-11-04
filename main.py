@@ -5546,8 +5546,8 @@ def _first_and_surname_of_two_doctors(said: str) -> bool:
             return False
         for info in _fast_path.catalogue._doctor_info.values():  # noqa: SLF001
             given, sur = name_groups._own_names(info)  # noqa: SLF001
-            if any(name_groups._same(toks[0], g) for g in given) and any(name_groups._same(toks[-1], x) for x in sur):  # noqa: SLF001
-                return False
+            if any(name_groups.exact_given(toks[0], g) for g in given) and any(name_groups._same(toks[-1], x) for x in sur):  # noqa: SLF001
+                return False  # (2026-11-04: exact_given -- মানসী is not মানস)
         return True
     return False
 
@@ -7273,6 +7273,12 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
             if _lr.get("matched"):
                 await _speak(session, _with_resume(session, await _route_reply(session, _lr, _combined, lang), lang), lang)
                 return
+    if not confirmed_entity and session.booking is None and owner_answers.asks_founding_year(text) and _nothing_is_open(session, ignore_answering=True):
+        await _speak(session, owner_answers.founding_year_reply(lang), lang)  # the year is in no table: said so, never the opening hours
+        return
+    if not confirmed_entity and off_topic.names_unrelated_topic(text) and _free_for_offtopic(session) and not _CLINIC_BUSINESS.search(text):
+        await _handle_offtopic(session, lang, text)  # politics / sport / films: "এই বিষয়ে আমি কিছু বলতে পারছি না। সোনোস্ক্যান সংক্রান্ত কোনো প্রশ্নে ..."
+        return
     if (
         not confirmed_entity
         and session.booking is None
@@ -7416,7 +7422,11 @@ async def _answer_content_turn(session: CallSession, text: str, lang: str, asr_r
                 return
             if await _which_doctor_turn(session, text, lang):
                 return
+            if await _bare_doctor_name_turn(session, text, lang):
+                return
             if await _unknown_full_name_turn(session, text, lang):
+                return
+            if await _first_name_only_turn(session, text, lang):
                 return
             if await _dept_named_availability_turn(session, text, lang):
                 return
@@ -10327,11 +10337,86 @@ def _strip_genitive(tok: str) -> str:
     return tok
 
 
+_EXISTENCE_CUE = re.compile(r"আছে|আছেন|বসে|বসেন|বসছে|বসবে|নাই|নেই|\b(?:ache|achhe|achen|nei|nai)\b")
+_FIRST_NAME_ASK = re.compile(r"(\S+)\s+(?:নামে|নামের|নাম এর)\s+(?:কোন|কোনো|কোন একজন)?\s*(?:ডাক্তার|ডাক্তারবাবু|doctor)")
+
+
+_MY_NAME_SAID = re.compile(r"আমার নাম|নাম হলো|নাম হল|নামটা|আমি .{0,30}বলছি|my name|mera naam|meri naam|amar naam|मेरा नाम")
+
+
+def _doctor_named_by_sound(text: str) -> dict | None:
+    """Owner, 2026-11-04 ("আপনাদের ওখানে মানস দত্ত বাসে", "মানুষ দত্ত বসে", "মানুষ দত্ত মানুষ দত্ত" were not understood, but "ডাক্তার মানজ দত্ত বসে" was): wherever a first name and a surname that BELONG TOGETHER
+    to one doctor are said -- by sound, in any script, with or without 'ডাক্তার' / 'স্যার' before or after -- that doctor is meant. The ending vowel keeps two names apart (মানস is not মানসী). None when no
+    doctor, or more than one, is named."""
+    if _fast_path is None:
+        return None
+    toks = [_strip_genitive(t.strip(".,?!।")) for t in text.split() if t.strip(".,?!।")]
+    infos = list({id(i): i for i in _fast_path.catalogue._doctor_info.values()}.values())  # noqa: SLF001
+    found: dict[int, dict] = {}
+    for a, b in zip(toks, toks[1:]):
+        if len(name_script.name_skeleton(a)) < 2 or len(name_script.name_skeleton(b)) < 2:
+            continue
+        for info in infos:
+            given, sur = name_groups._own_names(info)  # noqa: SLF001
+            if any(name_groups.sounds_like_given(a, g) for g in given) and any(name_groups._same(b, x) and abs(len(b) - len(x)) <= 2 for x in sur):  # noqa: SLF001
+                found[id(info)] = info
+    return next(iter(found.values())) if len(found) == 1 else None
+
+
+async def _bare_doctor_name_turn(session: CallSession, text: str, lang: str) -> bool:
+    """See _doctor_named_by_sound: the doctor's day / hours are told (the same answer as 'কবে বসেন'), for the day named else today, without being asked which doctor."""
+    if _fast_path is None or _tools is None or session.booking is not None or len(text.split()) > 12 or _MY_NAME_SAID.search(text) or _names_a_test(text, lang):
+        return False
+    info = _doctor_named_by_sound(text)
+    if info is None:
+        return False
+    name = info.get("full_name") or info.get("name")
+    if not name:
+        return False
+    today = slot_proposal.clinic_now().date()
+    date_iso = (weekday_cues.resolve_date(text, today) if weekday_cues.weekday_of(text) is not None else None) or booking_capture.read_when(text, False, want_day=True).date or today.isoformat()
+    session.subject_doctor = info.get("name")
+    await _speak_day_availability(session, name, date_iso, lang)
+    return True
+
+
+async def _first_name_only_turn(session: CallSession, text: str, lang: str) -> bool:
+    """Owner, 2026-11-04 ("অমিত নামে কোন ডাক্তার নাই" -- 'is there no doctor named Amit?' -- was answered with eight General Medicine doctors): a first name asked about ("<name> নামে ডাক্তার আছে?") is answered at once:
+    the doctors who carry it, each with his department, or 'nobody is named <name>'."""
+    if _fast_path is None or session.booking is not None or len(text.split()) > 14:
+        return False
+    m = _FIRST_NAME_ASK.search(text)
+    if not m:
+        return False
+    word = m.group(1).strip(".,?!।")
+    if len(name_script.name_skeleton(word)) < 2 or word in _NAME_FILLER:
+        return False
+    infos = list({id(i): i for i in _fast_path.catalogue._doctor_info.values()}.values())  # noqa: SLF001
+    groups = name_groups.build(word, infos, [])
+    if groups and (groups.get("given") or groups.get("surname")):
+        session.name_pick = {"infos": name_groups.offered(groups), "turn": session.turn_count}
+        label = lambda d: _dept_label(d, lang)  # noqa: E731
+        exact = groups.get("given") and all(any(name_groups.exact_given(word, g) for g in name_groups._own_names(i)[0]) for i in groups["given"])  # noqa: SLF001
+        if exact or (groups.get("surname") and not groups.get("given")):
+            # the name IS some doctor's: said as a fact ("অমিত নামে আছেন ..."), never "nobody is named ..." first
+            who = groups["given"] or groups["surname"]
+            say = name_groups.shared_reply(who, word, lang, label)
+            if len(who) == 1 and lang == "bn":
+                say = say.replace("কার কথা বলছেন?", "ওনার কথা বলছেন?")
+            await _speak(session, say, lang)
+            return True
+        await _speak(session, name_groups.reply(groups, word, lang, label), lang)
+        return True
+    say = {"bn": f"'{word}' নামে কেউ বসেন না।", "hi": f"'{word}' नाम के कोई डॉक्टर नहीं बैठते।", "en": f"No doctor here is named '{word}'."}.get(lang, f"No doctor here is named '{word}'.")
+    await _speak(session, say, lang)
+    return True
+
+
 async def _unknown_full_name_turn(session: CallSession, text: str, lang: str) -> bool:
     """Owner, 2026-10-31 ("না না অভিজিৎ নন্দীর কথা বলছি বাচ্চাদের ডাক্তার" was answered "which problem?"): a first name and a surname that no doctor of the clinic carries together, said about a doctor, are answered
     "'অভিজিৎ নন্দী' নামে কেউ বসেন না" and then the doctors who really share the first name (or, with no such first name, the surname), each with his department (agent/name_groups.py). Needs a doctor cue in
     the sentence, so an ordinary pair of words is never taken for a name."""
-    if _fast_path is None or session.booking is not None or len(text.split()) > 14 or (_DOCTOR_CUE.search(text) is None and not _awaiting_doctor_name(session)):
+    if _fast_path is None or session.booking is not None or len(text.split()) > 24 or (_DOCTOR_CUE.search(text) is None and _EXISTENCE_CUE.search(text) is None and not _awaiting_doctor_name(session)):
         return False
     infos = list({id(i): i for i in _fast_path.catalogue._doctor_info.values()}.values())  # noqa: SLF001
     if not infos:
@@ -10339,6 +10424,7 @@ async def _unknown_full_name_turn(session: CallSession, text: str, lang: str) ->
     toks = [t.strip(".,?!।") for t in text.split() if t.strip(".,?!।")]
     surnames = [x for i in infos for x in name_groups._own_names(i)[1]] + sorted(common_surnames.SURNAMES)  # noqa: SLF001  (owner, 2026-11-03: "দেবাশিস দেব" -- a surname nobody here carries)
     said = None
+    _all_said: list[str] = []
     for j in range(1, len(toks)):
         a, b = toks[j - 1], toks[j]
         if a in _NAME_FILLER or b in _NAME_FILLER or len(name_script.name_skeleton(a)) < 2:
@@ -10349,10 +10435,10 @@ async def _unknown_full_name_turn(session: CallSession, text: str, lang: str) ->
                 first = [a]
                 if j >= 2 and toks[j - 2] not in _NAME_FILLER and len(name_script.name_skeleton(toks[j - 2])) >= 2 and not any(name_groups._same(toks[j - 2], s_) for s_ in surnames):  # noqa: SLF001
                     first.insert(0, toks[j - 2])
-                said = f"{' '.join(first)} {cand}"
+                _all_said.append(f"{' '.join(first)} {cand}")
                 break
-        if said:
-            break
+    # Owner, 2026-11-04 ("মানস দত্ত না মানসী দত্ত ... আছে"): of the full names said, the LAST one that no doctor carries is the question
+    said = next((x for x in reversed(_all_said) if _first_and_surname_of_two_doctors(x)), None)
     if not said or not _first_and_surname_of_two_doctors(said):
         return False
     groups = name_groups.build(said, infos, [])

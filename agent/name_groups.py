@@ -39,6 +39,47 @@ def _same(a: str, b: str) -> bool:
     return len(name_script.name_skeleton(a)) >= 2 and len(name_script.name_skeleton(b)) >= 2 and name_script.same_given_name(a, b)
 
 
+_STRICT_FOLD = str.maketrans({"ী": "ি", "ূ": "ু", "শ": "স", "ষ": "স", "ণ": "ন", "ৎ": "ত", "ঈ": "ই", "ঊ": "উ", "ী": "ি", "ू": "ु", "ी": "ि", "श": "स", "ष": "स", "ण": "न"})
+
+
+def exact_given(a: str, b: str) -> bool:
+    """Owner, 2026-11-04 (মানস / মানসী, পল্লব / পল্লবী, অমিত / অমিতা: in Bengali a final ী / ি / া makes another person's name -- often the other sex): two given names are the SAME name when they are written
+    alike apart from the long / short vowel, the three s sounds, ণ / ন and ৎ / ত. An added or dropped ending is a different name. (_same, by sound, is for finding who was MEANT; this is for 'is there such a name'.)"""
+    def norm(x: str) -> str:
+        import unicodedata
+
+        t = unicodedata.normalize("NFC", (x or "").strip(".,?!।").lower()).replace("\u09bc", "").replace("\u200c", "").replace("\u200d", "")
+        return t.translate(_STRICT_FOLD)
+
+    na, nb = norm(a), norm(b)
+    if na == nb:
+        return True
+    if na.isascii() and nb.isascii():
+        return _same(a, b)
+    if (na.isascii() != nb.isascii()):  # a Latin spelling against a Bengali / Hindi one: only the sound can compare them
+        return _same(a, b)
+    return False
+
+
+def ending_variant(a: str, b: str) -> bool:
+    """True when one name is the other with a vowel ending put on or taken off (মানস / মানসী, পল্লব / পল্লবী, অমিত / অমিতা): the other person's name, however alike they sound."""
+    def norm(x: str) -> str:
+        import unicodedata
+
+        return unicodedata.normalize("NFC", (x or "").strip(".,?!।").lower()).replace("\u09bc", "").translate(_STRICT_FOLD)
+
+    na, nb = norm(a), norm(b)
+    if na == nb or not na or not nb:
+        return False
+    short, long_ = (na, nb) if len(na) <= len(nb) else (nb, na)
+    return long_.startswith(short) and long_[len(short):] in ("ি", "া", "ো", "ে", "ি", "ী", "ু", "ঁ", "ই", "ও")
+
+
+def sounds_like_given(a: str, b: str) -> bool:
+    """The same first name as heard (by sound -- "মানুষ" for মানস), but never a name with another ending."""
+    return _same(a, b) and not ending_variant(a, b)
+
+
 def _same_sound(a: str, b: str) -> bool:
     """The two first names have the SAME consonant skeleton (spelling variants of one name); a merely similar name ("রাজশ্রী" / "রাজেশ") does not count here."""
     import difflib
@@ -60,10 +101,16 @@ def build(said: str, infos: list[dict], api_suggestions: list[str]) -> dict | No
         if id(info) not in seen:
             seen.add(id(info))
             uniq.append(info)
-    by_sur = [i for i in uniq if any(_same(sur_word, s) for s in _own_names(i)[1])]
-    by_given = [i for i in uniq if given_word and any(_same_sound(given_word, g) for g in _own_names(i)[0]) and i not in by_sur]
-    if not given_word:  # a single word: it may be the first name or the surname
-        by_given = [i for i in uniq if any(_same_sound(sur_word, g) for g in _own_names(i)[0]) and i not in by_sur]
+    # Owner, 2026-11-04 ("অমিত কুমার" was answered "কুমার নামে আছেন ডাঃ অমিত কর": Kumar is not Kar): a surname counts as the same only when it is not much longer or shorter than the doctor's; and the FIRST name is
+    # looked at first -- a doctor who shares the first name is offered by it, never as a "surname" match.
+    def _near(a: str, b: str) -> bool:
+        return abs(len(a.strip()) - len(b.strip())) <= 2
+
+    if given_word:
+        by_given = [i for i in uniq if any(_same_sound(given_word, g) for g in _own_names(i)[0])]
+    else:  # a single word: it may be the first name or the surname
+        by_given = [i for i in uniq if any(_same_sound(sur_word, g) for g in _own_names(i)[0])]
+    by_sur = [i for i in uniq if any(_same(sur_word, s) and _near(sur_word, s) for s in _own_names(i)[1]) and i not in by_given]
     sugg = []
     for s in api_suggestions or []:
         for i in uniq:
@@ -167,7 +214,12 @@ def reply(groups: dict, said_text: str, lang: str, label=None) -> str:
         parts.append({"bn": f"{w} নামে আছেন {names('surname')}।", "hi": f"{w} नाम के डॉक्टर हैं {names('surname')}।", "en": f"With the surname {w}: {names('surname')}."}.get(lang, ""))
     if groups["given"]:
         w = groups["given_word"]
-        parts.append({"bn": f"{w} নামে আছেন {names('given')}।", "hi": f"{w} नाम के डॉक्टर हैं {names('given')}।", "en": f"With the first name {w}: {names('given')}."}.get(lang, ""))
+        # Owner, 2026-11-04 (মানস / মানসী, পল্লব / পল্লবী: another ending is another name): "মানসী নামে আছেন ডাঃ মানস দত্ত" would say a Manasi exists. When the first name is not EXACTLY a doctor's, the doctors are the CLOSE names.
+        exact = all(any(exact_given(w, g) for g in _own_names(i)[0]) for i in groups["given"])
+        if exact:
+            parts.append({"bn": f"{w} নামে আছেন {names('given')}।", "hi": f"{w} नाम के डॉक्टर हैं {names('given')}।", "en": f"With the first name {w}: {names('given')}."}.get(lang, ""))
+        else:
+            parts.append({"bn": f"কাছাকাছি নামে আছেন {names('given')}।", "hi": f"मिलते-जुलते नाम के डॉक्टर हैं {names('given')}।", "en": f"Close names: {names('given')}."}.get(lang, ""))
     if groups["closer"]:
         parts.append({"bn": f"কাছাকাছি নাম: {names('closer')}।", "hi": f"मिलते-जुलते नाम: {names('closer')}।", "en": f"Closest names: {names('closer')}."}.get(lang, ""))
     if len(offered(groups)) == 1:

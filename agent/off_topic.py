@@ -104,6 +104,22 @@ _HOW_ARE_YOU = re.compile(
 )
 
 
+# Owner, 2026-11-04 ("পশ্চিমবঙ্গের মুখ্যমন্ত্রী কি আছে আপনাদের ওখানে" -- "is the Chief Minister of West Bengal there at your place?" -- was answered "I did not understand", because "at your place" looked like the clinic):
+# a sentence about politics, sport, films or the weather is NOT about the clinic, whatever else it says. Words that are also a doctor's surname ("সরকার") are deliberately not here.
+_UNRELATED_TOPIC = re.compile(
+    r"মুখ্যমন্ত্রী|প্রধানমন্ত্রী|রাষ্ট্রপতি|রাজ্যপাল|মন্ত্রী|ভোট|নির্বাচন|রাজনীতি|রাজনৈতিক|বিধানসভা|লোকসভা|ক্রিকেট|ফুটবল|আইপিএল|বিশ্বকাপ|সিনেমা|ফিল্ম|হিরোইন|শাহরুখ|সালমান|আবহাওয়া|শেয়ার বাজার|বিটকয়েন|"
+    r"मुख्यमंत्री|प्रधानमंत्री|राष्ट्रपति|चुनाव|राजनीति|क्रिकेट|फुटबॉल|फिल्म|मौसम|"
+    r"\b(?:chief minister|prime minister|president|election|politic\w*|cricket|football|ipl|movie|film|weather|bitcoin|share market)\b",
+    re.I,
+)
+
+
+def names_unrelated_topic(text: str) -> bool:
+    """True when the sentence is about a public topic that has nothing to do with the clinic (see above) and says nothing about health."""
+    t = text or ""
+    return bool(_UNRELATED_TOPIC.search(t)) and not has_health_word(t)
+
+
 def how_are_you(text: str) -> bool:
     """A polite "how are you?" ("আপনি ভালো আছেন?", "কেমন আছেন", "आप कैसे हैं"): answered kindly once with a fixed line, never a strike."""
     t = _norm(text)
