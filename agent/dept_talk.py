@@ -378,5 +378,5 @@ def all_are_good(lang: str) -> str:
 
 def ask_which(lang: str, n: int) -> str:
     if n <= 1:
-        return {"bn": "অ্যাপয়েন্টমেন্ট করতে চান?", "hi": "अपॉइंटमेंट लेना चाहेंगे?", "en": "Would you like to book an appointment?"}.get(lang, "")
+        return {"bn": "বুক করব?", "hi": "बुक कर दूँ?", "en": "Shall I book?"}.get(lang, "")
     return {"bn": "কোন ডাক্তারের সাথে অ্যাপয়েন্টমেন্ট করতে চান?", "hi": "किस डॉक्टर के साथ अपॉइंटमेंट लेना चाहेंगे?", "en": "Which doctor would you like to book?"}.get(lang, "")

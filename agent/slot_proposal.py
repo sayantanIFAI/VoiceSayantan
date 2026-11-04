@@ -207,15 +207,17 @@ def conclusion(doctor: str, date_iso: str, time: str, lang: str, now: datetime.d
 
 
 _SITS_ASK = {
-    "bn": "ডাক্তার {doc} {when} {time}-এ বসবেন। অ্যাপয়েন্টমেন্ট করব?",
-    "hi": "डॉक्टर {doc} {when} {time} बजे बैठेंगे। उसी दिन अपॉइंटमेंट कर दूँ?",
-    "en": "Doctor {doc} sits {when} at {time}. Shall I book that day?",
+    # Owner, 2026-11-04: the doctor's DEPARTMENT is told ("{dept}" = "ডায়াবেটোলজি ও এন্ডোক্রিনোলজি বিভাগের " ...): "ডাক্তার পার্থ রায় ... বসবেন" alone left a sugar patient thinking it was a cardiologist. And
+    # the question is always "বুক করব?" (shall I book?), never "অ্যাপয়েন্টমেন্ট করব?".
+    "bn": "{dept}ডাক্তার {doc} {when} {time}-এ বসবেন। বুক করব?",
+    "hi": "{dept}डॉक्टर {doc} {when} {time} बजे बैठेंगे। उसी दिन बुक कर दूँ?",
+    "en": "Doctor {doc}{dept} sits {when} at {time}. Shall I book that day?",
 }
 _SITS_MOVED = {
     # Owner, 2026-10-31 ("উনি -- in place of this tell the doctor name"): the doctor who sits on the later day is NAMED in the sentence, not "he".
-    "bn": "{asked} ডাক্তার বসেন না। ডাক্তার {doc} {when} {time}-এ বসবেন। ওই দিনে অ্যাপয়েন্টমেন্ট করব?",
-    "hi": "{asked} डॉक्टर नहीं बैठते। डॉक्टर {doc} {when} {time} बजे बैठेंगे। उसी दिन अपॉइंटमेंट कर दूँ?",
-    "en": "The doctor does not sit {asked}. Doctor {doc} sits next {when} at {time}. Shall I book that day?",
+    "bn": "{asked} ডাক্তার বসেন না। {dept}ডাক্তার {doc} {when} {time}-এ বসবেন। ওই দিনে বুক করব?",
+    "hi": "{asked} डॉक्टर नहीं बैठते। {dept}डॉक्टर {doc} {when} {time} बजे बैठेंगे। उसी दिन बुक कर दूँ?",
+    "en": "The doctor does not sit {asked}. Doctor {doc}{dept} sits next {when} at {time}. Shall I book that day?",
 }
 _ASKED_DAY = {
     "bn": {"today": "আজ", "tomorrow": "আগামীকাল", "day_after": "পরশু", "other": "{date} তারিখে"},
@@ -225,7 +227,7 @@ _ASKED_DAY = {
 
 
 def sits_statement(
-    doctor: str, date_iso: str, time: str, lang: str, now: datetime.datetime | None = None, moved: bool = False, asked_date: str | None = None
+    doctor: str, date_iso: str, time: str, lang: str, now: datetime.datetime | None = None, moved: bool = False, asked_date: str | None = None, dept: str | None = None
 ) -> str:
     """Owner, 2026-10-18: the caller asks for a doctor on a day: FIRST say whether the doctor sits then ("ডাক্তার বিশ্বজিৎ সেন আগামীকাল, 2026-10-19 তারিখে 10:00-এ বসবেন।"), or
     that he does not and when he next sits, and ask whether to book that day. The name and the rest are asked only after the caller says yes (or names another day)."""
@@ -233,7 +235,10 @@ def sits_statement(
     doctor = (doctor or "").replace("Dr. ", "", 1).replace("Dr ", "", 1).replace("ডাঃ ", "", 1).replace("ডাক্তার ", "", 1).replace("डॉ. ", "", 1).replace("डॉक्टर ", "", 1)  # the sentence already says "Doctor"
     table = _SITS_MOVED if moved else _SITS_ASK
     asked = _ASKED_DAY[lang][day_kind(asked_date, now)].format(date=asked_date) if (moved and asked_date) else {"bn": "ওই দিন", "hi": "उस दिन", "en": "that day"}[lang]
-    return table[lang].format(doc=doctor, when=when_phrase(date_iso, lang, now), time=time, asked=asked)
+    dept_part = ""
+    if dept:
+        dept_part = {"bn": f"{dept} বিভাগের ", "hi": f"{dept} विभाग के ", "en": f" of {dept}"}[lang]
+    return table[lang].format(doc=doctor, when=when_phrase(date_iso, lang, now), time=time, asked=asked, dept=dept_part)
 
 
 _PAY_NOTICE = {

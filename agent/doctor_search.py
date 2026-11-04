@@ -287,9 +287,9 @@ def sitting_list_reply(sitting: list[dict], when_phrase: str, dept_label: str, l
         # Owner, 2026-10-27: with ONE doctor there is nobody to choose between -- "whom?" is the wrong question; ask whether to book him.
         g = grouped or names[0]
         return {
-            "bn": f"{when_phrase} {dept_label} বিভাগে {g}। অ্যাপয়েন্টমেন্ট করতে চান?",
-            "hi": f"{when_phrase} {dept_label} विभाग में {g}। अपॉइंटमेंट करना चाहेंगे?",
-            "en": f"{when_phrase} in {dept_label}, {g}. Would you like an appointment?",
+            "bn": f"{when_phrase} {dept_label} বিভাগে {g}। বুক করব?",
+            "hi": f"{when_phrase} {dept_label} विभाग में {g}। बुक कर दूँ?",
+            "en": f"{when_phrase} in {dept_label}, {g}. Shall I book?",
         }[lang]
     g = grouped or _join(names, lang)
     return {
@@ -435,7 +435,7 @@ def offered_followup_reply(items: list[dict], part: str | None, good: bool, lang
         if len(fits) == 1:
             one = fits[0]
             say = {
-                "bn": f"{lead}{one['name']} {word} বসেন ({one.get('start')}-{one.get('end')})। ওনার কাছেই অ্যাপয়েন্টমেন্ট করব?",
+                "bn": f"{lead}{one['name']} {word} বসেন ({one.get('start')}-{one.get('end')})। ওনার কাছেই বুক করব?",
                 "hi": f"{lead}{one['name']} {word} बैठते हैं ({one.get('start')}-{one.get('end')})। क्या उन्हीं के साथ अपॉइंटमेंट कर दूँ?",
                 "en": f"{lead}{one['name']} sits {word} ({one.get('start')}-{one.get('end')}). Shall I book him?",
             }[lg]

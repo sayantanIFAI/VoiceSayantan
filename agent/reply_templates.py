@@ -228,7 +228,7 @@ def booking_doctor_sitting_hint(result: dict, lang: str = "bn") -> str:
         return "কোন দিনের জন্য অ্যাপয়েন্টমেন্ট চাই?"
     return (
         f"{name} {slot_proposal.when_phrase(result.get('date'), 'bn')} বসবেন, সময় {result.get('chamber_hours', '')}-এর মধ্যে। "
-        "অ্যাপয়েন্টমেন্ট করব?"
+        "বুক করব?"
     )
 
 
@@ -591,7 +591,7 @@ def department_route_reply(result: dict, symptom: str, lang: str = "bn") -> str:
         dept = result["department_name"]
         if today:
             if len(today) == 1:  # owner, 2026-10-28: one doctor -- not "which one"
-                return f"আজ {dept} বিভাগে {today[0]} আছেন। ওনার সাথে অ্যাপয়েন্টমেন্ট করতে চান?"
+                return f"আজ {dept} বিভাগে {today[0]} আছেন। ওনার সাথে বুক করব?"
             n = len(today)
             count = {2: "দুইজন", 3: "তিনজন", 4: "চারজন", 5: "পাঁচজন", 6: "ছয়জন", 7: "সাতজন", 8: "আটজন"}.get(n, f"{n} জন")  # a count is said as a word, never a digit inside a Bengali sentence
             return f"আজ {dept} বিভাগে {count} ডাক্তার বসছেন: {', '.join(today)}। কাকে দেখাতে চান?"

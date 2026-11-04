@@ -3689,7 +3689,7 @@ async def _propose_slot(session: CallSession, st, lang: str) -> bool:
         st.slots["_time_ok"] = "pending"
         st.slots["_sits_told"] = "1"
         sits_next = await _sits_start(st, nxt["date"], info)
-        await _speak(session, slot_proposal.sits_statement(doctor, nxt["date"], sits_next or nxt["time_slot"], lang, moved=True, asked_date=asked_day), lang)
+        await _speak(session, slot_proposal.sits_statement(doctor, nxt["date"], sits_next or nxt["time_slot"], lang, moved=True, asked_date=asked_day, dept=_dept_for(st.slots.get("doctor_name"), lang)), lang)
         return True
     if given and given in (info.get("free_slots") or []):
         st.slots["_time_explicit"] = "1"  # the caller named this time: it is the one told back
@@ -3723,7 +3723,7 @@ async def _propose_slot(session: CallSession, st, lang: str) -> bool:
         # alternatives can be offered for it instead of silently re-deriving the same moved day again.
         st.slots["_day_full_from"] = st.slots["date"]
         st.slots["date"] = new_date
-        await _speak(session, f"{slot_proposal.none_left(lang)} {slot_proposal.sits_statement(doctor, new_date, sits or slot, lang)}", lang)
+        await _speak(session, f"{slot_proposal.none_left(lang)} {slot_proposal.sits_statement(doctor, new_date, sits or slot, lang, dept=_dept_for(st.slots.get("doctor_name"), lang))}", lang)
         return True
     # Owner, 2026-10-18: the day is the caller's own and the doctor sits that day. Nothing is asked about the time here: the slot is held quietly, the name, the number,
     # the age and the address are asked one at a time, and the day / hour / "come with one to two hours in hand" is the last question (agent/slot_proposal.arrival_question).
@@ -3736,7 +3736,7 @@ async def _propose_slot(session: CallSession, st, lang: str) -> bool:
     if not told:
         st.slots["_sits_told"] = "1"
         st.slots["_time_ok"] = "pending"
-        await _speak(session, slot_proposal.sits_statement(doctor, st.slots["date"], sits or slot, lang), lang)
+        await _speak(session, slot_proposal.sits_statement(doctor, st.slots["date"], sits or slot, lang, dept=_dept_for(st.slots.get("doctor_name"), lang)), lang)
         return True
     st.slots["_time_ok"] = "yes"
     return False
@@ -4096,6 +4096,20 @@ def _when_phrase(date_iso: str | None, time_hhmm: str | None, lang: str) -> str:
     return " ".join(parts)
 
 
+def _dept_for(doctor, lang: str) -> str | None:
+    """Owner, 2026-11-04: the department a doctor belongs to, in the call's language, from the clinic's catalogue -- told in every "Doctor X sits ..." sentence. `doctor` is a listed doctor (a dict with a
+    full_name / name) or a name; None when the catalogue does not know him (the sentence then goes without it, as before)."""
+    if _fast_path is None:
+        return None
+    with contextlib.suppress(Exception):
+        names = [doctor.get("full_name"), doctor.get("name")] if isinstance(doctor, dict) else [doctor]
+        for n in names:
+            dept = _fast_path.catalogue.doctor_department(n) if n else None
+            if dept:
+                return _dept_label(dept, lang)
+    return None
+
+
 def _resolve_doctor_for_booking(item: dict) -> str:
     return item.get("full_name") or item.get("name") or ""
 
@@ -4297,7 +4311,7 @@ async def _say_nobody_then_next(session: CallSession, text: str, lang: str, sex:
     lead = lead or _nobody_lead(lang, when_phrase, label)
     if len(sit) == 1:
         item = sit[0]
-        say = f"{lead} {slot_proposal.sits_statement(item['name'], iso, item.get('start') or '', lang)}"
+        say = f"{lead} {slot_proposal.sits_statement(item['name'], iso, item.get('start') or '', lang, dept=_dept_for(item, lang))}"
         session.dept_pending = {"kind": "confirm_one", "doctor": item, "date": iso, "time": item.get("start"), "turn": session.turn_count, "say": say}
     else:
         say = f"{lead} {doctor_search.sitting_pick_question([x['name'] for x in sit], _when_phrase(iso, None, lang), lang, items=sit)}"
@@ -4321,7 +4335,7 @@ async def _next_sitting_offer(dept: str, label: str, lang: str) -> dict | None:
     }.get(lang, f"Nobody from {label} sits today.")
     if len(sit) == 1:
         item = sit[0]
-        say = f"{lead} {slot_proposal.sits_statement(item['name'], iso, item.get('start') or '', lang)}"
+        say = f"{lead} {slot_proposal.sits_statement(item['name'], iso, item.get('start') or '', lang, dept=_dept_for(item, lang))}"
         return {"say": say, "pending": {"kind": "confirm_one", "doctor": item, "date": iso, "time": item.get("start")}}
     say = f"{lead} {doctor_search.sitting_pick_question([s['name'] for s in sit], _when_phrase(iso, None, lang), lang, items=sit)}"
     return {"say": say, "pending": {"kind": "pick", "doctors": sit, "date": iso, "time": None}}
@@ -4376,7 +4390,7 @@ async def _dept_search_turn(session: CallSession, text: str, lang: str) -> dict 
                 _win = f"{_it['start']}-{_it['end']}" if _it.get("start") and _it.get("end") else (_it.get("start") or "")
                 if _win and (_names_him or not _text_names_a_doctor(text, lang)):
                     _day = pend.get("date") or slot_proposal.clinic_now().date().isoformat()
-                    _say = slot_proposal.sits_statement(_it.get("name") or "", _day, _win, lang)
+                    _say = slot_proposal.sits_statement(_it.get("name") or "", _day, _win, lang, dept=_dept_for(_it, lang))
                     session.dept_pending = {**pend, "turn": session.turn_count, "say": _say}
                     await _speak(session, _say, lang)
                     return True
@@ -4495,7 +4509,7 @@ async def _dept_day_listing(session: CallSession, text: str, lang: str, sex: str
             sitting, kol_lead = _kolkata_sitting(sitting, label, lang)
         if len(sitting) == 1:
             item = sitting[0]
-            say = (kol_lead + " " if kol_lead else "") + slot_proposal.sits_statement(item["name"], on_date, at_time or item.get("start") or "", lang)
+            say = (kol_lead + " " if kol_lead else "") + slot_proposal.sits_statement(item["name"], on_date, at_time or item.get("start") or "", lang, dept=_dept_for(item, lang))
             session.dept_pending = {"kind": "confirm_one", "doctor": item, "date": on_date, "time": at_time, "turn": session.turn_count, "say": say}
             await _say(session, say, lang)
             return True
@@ -4517,7 +4531,7 @@ async def _dept_day_listing(session: CallSession, text: str, lang: str, sex: str
                 lead = _nobody_lead(lang, phrase_when, label)
                 if len(sit) == 1:
                     item = sit[0]
-                    say = f"{lead} {slot_proposal.sits_statement(item['name'], iso, item.get('start') or '', lang)}"
+                    say = f"{lead} {slot_proposal.sits_statement(item['name'], iso, item.get('start') or '', lang, dept=_dept_for(item, lang))}"
                     session.dept_pending = {"kind": "confirm_one", "doctor": item, "date": iso, "time": item.get("start"), "turn": session.turn_count, "say": say}
                 else:
                     say = f"{lead} {doctor_search.sitting_pick_question([s['name'] for s in sit], _when_phrase(iso, None, lang), lang, items=sit)}"
