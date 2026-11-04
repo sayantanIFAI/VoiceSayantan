@@ -4254,6 +4254,19 @@ async def _route_reply(session: CallSession, routed: dict, symptom: str, lang: s
         session.unclear_problem_asks = 0
     elif not routed.get("ambiguous") and not eye_words.mentions_eye(symptom):
         return await _unclear_problem_reply(session, lang)
+    if routed.get("matched") and symptom and (weekday_cues.weekday_of(symptom) is not None or doctor_search.asked_part_of_day(symptom) or booking_capture.read_when(symptom, False, want_day=True).date):
+        # Owner, 2026-11-04 ("বুকের ডাক্তার কে আছে ... সামনের শনিবার ... বিকালবেলা" was answered "আজ কার্ডিওলজি বিভাগে দুইজন ডাক্তার বসছেন"): the DAY the caller named (the coming Saturday = 7 November, worked out
+        # by the code) and the PART OF THE DAY (afternoon) decide the answer: who sits then and still has a free slot, else who sits next. The words are collected here and returned to the caller to speak.
+        sink: list = []
+        token = _speech_sink.set(sink)
+        try:
+            done = await _day_part_sitting_reply(session, symptom, lang, routed["department_name"])
+        except ToolCallError:
+            done = False
+        finally:
+            _speech_sink.reset(token)
+        if done and sink:
+            return " ".join(sink)
     if routed.get("matched") and not routed.get("doctors_today") and routed.get("doctors"):
         offer = await _next_sitting_offer(routed["department_name"], _dept_label(routed["department_name"], lang), lang)
         if offer is not None:
@@ -4273,6 +4286,18 @@ async def _route_reply(session: CallSession, routed: dict, symptom: str, lang: s
     return reply
 
 
+_speech_sink: "contextvars.ContextVar[list | None]" = contextvars.ContextVar("_speech_sink", default=None)
+
+
+async def _say(session: CallSession, text: str, lang: str) -> float:
+    """_speak, except while a caller is collecting the words instead (see _route_reply): then the text is handed to it to speak."""
+    sink = _speech_sink.get()
+    if sink is not None:
+        sink.append(text)
+        return 0.0
+    return await _speak(session, text, lang)
+
+
 async def _say_nobody_then_next(session: CallSession, text: str, lang: str, sex: str | None, on_date: str, when_phrase: str, label: str, lead: str | None = None) -> bool:
     """"Nobody from <department> sits <day>. Dr X sits <next day> at <time>. Shall I book that day?" -- or, for several, which of them; the open question is kept (dept_pending). False when
     nobody sits in the following week (the caller then hears the plain 'nobody sits')."""
@@ -4288,7 +4313,7 @@ async def _say_nobody_then_next(session: CallSession, text: str, lang: str, sex:
     else:
         say = f"{lead} {doctor_search.sitting_pick_question([x['name'] for x in sit], _when_phrase(iso, None, lang), lang, items=sit)}"
         session.dept_pending = {"kind": "pick", "doctors": sit, "date": iso, "time": None, "turn": session.turn_count, "say": say}
-    await _speak(session, say, lang)
+    await _say(session, say, lang)
     return True
 
 
@@ -10899,7 +10924,7 @@ async def _day_part_sitting_reply(session: CallSession, text: str, lang: str, de
         }[lg]
         if await _say_nobody_then_next(session, dept_name, lang, None, iso, when_words, label, lead=full):
             return True
-        await _speak(session, full, lang)
+        await _say(session, full, lang)
         return True
     say = doctor_search.sitting_list_reply(avail, when_words, label, lang)
     if _is_existence_question(text):
@@ -10910,7 +10935,7 @@ async def _day_part_sitting_reply(session: CallSession, text: str, lang: str, de
         session.dept_pending = {"kind": "pick", "doctors": avail, "date": iso, "time": None, "turn": session.turn_count, "say": say}
     session.dept_topic = dept_name
     session.last_route = {"dept": dept_name, "names": [a["name"] for a in avail], "turn": session.turn_count}
-    await _speak(session, _with_resume(session, say, lang), lang)
+    await _say(session, say if _speech_sink.get() is not None else _with_resume(session, say, lang), lang)
     return True
 
 
