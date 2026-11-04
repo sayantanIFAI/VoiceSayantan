@@ -5557,8 +5557,8 @@ def _first_and_surname_of_two_doctors(said: str) -> bool:
             return False
         for info in _fast_path.catalogue._doctor_info.values():  # noqa: SLF001
             given, sur = name_groups._own_names(info)  # noqa: SLF001
-            if any(name_groups.exact_given(toks[0], g) for g in given) and any(name_groups._same(toks[-1], x) for x in sur):  # noqa: SLF001
-                return False  # (2026-11-04: exact_given -- মানসী is not মানস)
+            if any(name_groups.sounds_like_given(toks[0], g) for g in given) and any(name_groups._same(toks[-1], x) for x in sur):  # noqa: SLF001
+                return False  # (2026-11-04: by sound, but not another ending -- মানুষ is মানস as heard, মানসী is not)
         return True
     return False
 
@@ -10441,7 +10441,8 @@ async def _unknown_full_name_turn(session: CallSession, text: str, lang: str) ->
             if any(name_groups._same(cand, s_) for s_ in surnames):  # noqa: SLF001
                 # Owner, 2026-11-03 ("অমর কান্তি পাল": the recogniser splits a first name in two): the name-like words right before the surname, up to two, are the first name
                 first = [a]
-                if j >= 2 and toks[j - 2] not in _NAME_FILLER and len(name_script.name_skeleton(toks[j - 2])) >= 2 and not any(name_groups._same(toks[j - 2], s_) for s_ in surnames):  # noqa: SLF001
+                # (owner, 2026-11-04: "অমিত কুমারের কথা অমিত কুমার" -- the word before the name, "কথা", was taken for the first half of the first name: it only counts when it SOUNDS like a doctor's first name)
+                if j >= 2 and toks[j - 2] not in _NAME_FILLER and len(name_script.name_skeleton(toks[j - 2])) >= 2 and not any(name_groups._same(toks[j - 2], s_) for s_ in surnames) and any(name_groups._same(toks[j - 2], g_) for i_ in infos for g_ in name_groups._own_names(i_)[0]):  # noqa: SLF001
                     first.insert(0, toks[j - 2])
                 _all_said.append(f"{' '.join(first)} {cand}")
                 break
