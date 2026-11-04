@@ -417,7 +417,7 @@ NATURAL_PAUSE_S = float(os.environ.get("NATURAL_PAUSE_S", "0.05"))  # 2026-11-04
 # once whether there is anything else (the call ends if not); if there is still nothing after SILENCE_CLOSE_S, end it.
 SILENCE_PROMPT_S = float(os.environ.get("SILENCE_PROMPT_S", "5"))
 SILENCE_CLOSE_S = float(os.environ.get("SILENCE_CLOSE_S", "5"))
-BOOKING_CLOSE_FACTOR = float(os.environ.get("BOOKING_CLOSE_FACTOR", "4"))  # REASONED: a caller looking for a phone number or an address needs more than 5 s
+BOOKING_CLOSE_FACTOR = float(os.environ.get("BOOKING_CLOSE_FACTOR", "1"))  # Owner, 2026-11-04: inside a booking question too, a caller silent for SILENCE_CLOSE_S (5 s) after the prompt is hung up on (was 4 x 5 = 20 s)
 SILENCE_HELLOS = int(os.environ.get("SILENCE_HELLOS", "3"))  # "hello?" this many times to a caller who has said nothing at all, then the call is cut
 
 # KCD-076: agent/channel_quality.py's FFT-based classification is pure

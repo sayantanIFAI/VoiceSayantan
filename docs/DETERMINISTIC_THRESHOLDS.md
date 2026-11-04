@@ -471,7 +471,7 @@ I read `lang_select.py`, `lid.py` (router), `language_policy.py`, the top of `la
 | main.py:411 | `NATURAL_PAUSE_S` | env `NATURAL_PAUSE_S` = `0.15` |  |
 | main.py:415 | `SILENCE_PROMPT_S` | env `SILENCE_PROMPT_S` = `5` |  |
 | main.py:416 | `SILENCE_CLOSE_S` | env `SILENCE_CLOSE_S` = `5` |  |
-| main.py:417 | `BOOKING_CLOSE_FACTOR` | env `BOOKING_CLOSE_FACTOR` = `4` | REASONED: a caller looking for a phone number or an address needs more than 5 s |
+| main.py:417 | `BOOKING_CLOSE_FACTOR` | env `BOOKING_CLOSE_FACTOR` = `1` | Owner, 2026-11-04: same 5 s after the prompt inside a booking as outside (was 4) |
 | main.py:418 | `SILENCE_HELLOS` | env `SILENCE_HELLOS` = `3` | "hello?" this many times to a caller who has said nothing at all, then the call is cut |
 | main.py:426 | `CHANNEL_QUALITY_BUDGET_S` | `0.08` |  |
 | main.py:432 | `AUDIO_ANALYSIS_BUDGET_S` | `0.5` |  |
